@@ -66,7 +66,7 @@ struct MenuBarIcon: View {
     private func createGhostImage() -> NSImage {
         let size = NSSize(width: 14, height: 18)
         let image = NSImage(size: size, flipped: false) { rect in
-            let strokeWidth: CGFloat = 1.5
+            let strokeWidth: CGFloat = 1.0
             let insetRect = rect.insetBy(dx: strokeWidth / 2 + 1, dy: strokeWidth / 2 + 1)
             
             // Create the ghost path

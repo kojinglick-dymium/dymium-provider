@@ -5,6 +5,7 @@ A macOS menu bar application for seamless Keycloak authentication with Dymium/Gh
 ## Overview
 
 **DymiumProvider** is a Swift macOS menu bar app that:
+
 - Authenticates with Keycloak using OAuth2 password/refresh token grants
 - Automatically refreshes access tokens before expiry
 - Syncs available models from the LLM endpoint to OpenCode config
@@ -92,6 +93,7 @@ Create `~/.dymium/config.json`:
 
 1. Run DymiumProvider (it will appear in the menu bar)
 2. The app will:
+
    - Authenticate with Keycloak
    - Write tokens to `~/.dymium/token` and `~/.local/share/opencode/auth.json`
    - Install the OpenCode plugin at `~/.local/share/dymium-opencode-plugin/`
@@ -139,6 +141,7 @@ The app automatically configures OpenCode with the dymium provider:
 ### Model Sync
 
 On every token refresh, the app calls `/v1/models` to:
+
 - Fetch available models from the LLM endpoint
 - Automatically add new models to opencode.json with sensible defaults
 - Remove models that are no longer available
@@ -175,6 +178,14 @@ DymiumProvider/
 swift build           # Debug build
 swift build -c release  # Release build
 ```
+
+### TODO / Planned Features
+
+- [ ] UI: Log out button, icon should be a little narrower and outlined, rethink colors according to branding.
+- [ ] Link to portal frontend?
+- [ ] Accessing GhostDBs, GhostFiles, etc. securely, mananging resources from the menu bar.
+- [ ] Versions for linux, windows
+- [ ] Apple Developer signing
 
 ## License
 
