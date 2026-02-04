@@ -1,0 +1,33 @@
+# Swift/Xcode
+.build/
+.swiftpm/
+*.xcodeproj/
+*.xcworkspace/
+DerivedData/
+*.pbxuser
+*.mode1v3
+*.mode2v3
+*.perspectivev3
+*.xcuserstate
+xcuserdata/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Debug/logs
+*.log
+debug.log
+
+# Secrets (never commit)
+config.json
+*.pem
+*.key
+
+# Build artifacts
+*.app
+*.ipa
+*.dSYM.zip
+*.dSYM
