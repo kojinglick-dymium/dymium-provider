@@ -64,7 +64,7 @@ struct MenuBarIcon: View {
     
     /// Create an NSImage of the ghost for the menu bar (outlined/stroked)
     private func createGhostImage() -> NSImage {
-        let size = NSSize(width: 18, height: 24)
+        let size = NSSize(width: 14, height: 18)
         let image = NSImage(size: size, flipped: false) { rect in
             let strokeWidth: CGFloat = 1.5
             let insetRect = rect.insetBy(dx: strokeWidth / 2 + 1, dy: strokeWidth / 2 + 1)
