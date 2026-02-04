@@ -1,5 +1,20 @@
 import SwiftUI
 
+// MARK: - Dymium Brand Colors
+
+extension Color {
+    /// Dymium primary blue
+    static let dymiumPrimary = Color(red: 0x43/255, green: 0x69/255, blue: 0xff/255)  // #4369ff
+    /// Dymium accent purple
+    static let dymiumAccent = Color(red: 0x90/255, green: 0x4d/255, blue: 0xff/255)   // #904dff
+    /// Dymium success green
+    static let dymiumSuccess = Color(red: 0x19/255, green: 0x87/255, blue: 0x54/255)  // #198754
+    /// Dymium danger red
+    static let dymiumDanger = Color(red: 0xdc/255, green: 0x35/255, blue: 0x45/255)   // #dc3545
+    /// Dymium warning yellow
+    static let dymiumWarning = Color(red: 0xff/255, green: 0xc1/255, blue: 0x07/255)  // #ffc107
+}
+
 /// Main popover view shown when clicking the menu bar icon
 struct PopoverView: View {
     @ObservedObject var tokenService: TokenService
@@ -9,9 +24,7 @@ struct PopoverView: View {
         VStack(alignment: .leading, spacing: 12) {
             // Header with ghost and status
             HStack {
-                GhostShape()
-                    .fill(statusColor)
-                    .frame(width: 24, height: 28)
+                ghostIcon
                 
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Dymium Provider")
@@ -46,6 +59,15 @@ struct PopoverView: View {
                 
                 Spacer()
                 
+                if tokenService.hasCredentials {
+                    Button("Log Out") {
+                        Task {
+                            await tokenService.logOut()
+                        }
+                    }
+                    .foregroundColor(.dymiumDanger)
+                }
+                
                 Button("Setup") {
                     openWindow(id: "setup")
                 }
@@ -57,7 +79,23 @@ struct PopoverView: View {
             .buttonStyle(.bordered)
         }
         .padding()
-        .frame(width: 280)
+        .frame(width: 300)
+    }
+    
+    @ViewBuilder
+    private var ghostIcon: some View {
+        switch tokenService.state {
+        case .idle, .failed:
+            GhostShape()
+                .stroke(Color.gray, lineWidth: 1.5)
+                .frame(width: 18, height: 24)
+        case .authenticating:
+            AnimatedGradientGhost()
+                .frame(width: 18, height: 24)
+        case .authenticated:
+            GradientGhost()
+                .frame(width: 18, height: 24)
+        }
     }
     
     private var statusColor: Color {
@@ -65,11 +103,11 @@ struct PopoverView: View {
         case .idle:
             return .gray
         case .authenticating:
-            return .yellow
+            return .dymiumPrimary  // Will be overridden by gradient in ghostIcon
         case .authenticated:
-            return .green
+            return .dymiumPrimary  // Will be overridden by gradient in ghostIcon
         case .failed:
-            return .red
+            return .gray
         }
     }
     
@@ -112,7 +150,7 @@ struct PopoverView: View {
             if let error = tokenService.state.errorMessage {
                 Text(error)
                     .font(.caption)
-                    .foregroundColor(.red)
+                    .foregroundColor(.dymiumDanger)
                     .lineLimit(3)
             }
             
@@ -123,13 +161,13 @@ struct PopoverView: View {
                 Spacer()
                 if TokenWriter.shared.tokenExists {
                     Image(systemName: "checkmark.circle.fill")
-                        .foregroundColor(.green)
+                        .foregroundColor(.dymiumSuccess)
                     Text("~/.dymium/token")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 } else {
                     Image(systemName: "xmark.circle.fill")
-                        .foregroundColor(.red)
+                        .foregroundColor(.dymiumDanger)
                     Text("Not written")
                         .font(.caption)
                         .foregroundColor(.secondary)
@@ -144,7 +182,7 @@ struct PopoverView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Credentials not configured")
                 .font(.subheadline)
-                .foregroundColor(.orange)
+                .foregroundColor(.dymiumWarning)
             
             Text("Click Setup to enter your Keycloak credentials.")
                 .font(.caption)
@@ -179,8 +217,8 @@ struct SetupView: View {
             // Header
             HStack {
                 GhostShape()
-                    .fill(.blue)
-                    .frame(width: 32, height: 36)
+                    .stroke(Color.dymiumPrimary, lineWidth: 2)
+                    .frame(width: 24, height: 32)
                 
                 VStack(alignment: .leading) {
                     Text("Dymium Setup")
@@ -249,7 +287,7 @@ struct SetupView: View {
             if let error = errorMessage {
                 Text(error)
                     .font(.caption)
-                    .foregroundColor(.red)
+                    .foregroundColor(.dymiumDanger)
                     .lineLimit(3)
             }
             

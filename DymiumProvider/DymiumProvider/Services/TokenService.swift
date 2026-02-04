@@ -62,6 +62,31 @@ final class TokenService: ObservableObject {
         await authenticate()
     }
     
+    /// Log out - clear all stored credentials and tokens
+    func logOut() async {
+        // Stop the refresh loop
+        stopRefreshLoop()
+        
+        // Clear all credentials from config/keychain
+        try? keychain.delete(key: .clientSecret)
+        try? keychain.delete(key: .password)
+        try? keychain.delete(key: .refreshToken)
+        
+        // Delete the token file
+        try? TokenWriter.shared.deleteToken()
+        
+        // Delete the auth.json for OpenCode
+        let authPath = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".local/share/opencode/auth.json")
+        try? FileManager.default.removeItem(at: authPath)
+        
+        // Reset state
+        state = .idle
+        lastRefreshTime = nil
+        
+        print("[TokenService] Logged out - all credentials cleared")
+    }
+    
     /// Authenticate - tries refresh token first, falls back to password grant
     private func authenticate() async {
         state = .authenticating
