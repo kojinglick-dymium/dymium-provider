@@ -10,6 +10,10 @@ struct AppConfig: Codable {
     var refreshIntervalSeconds: Int
     var llmEndpoint: String
     
+    /// The GhostLLM application name or ID (required for OIDC/JWT auth)
+    /// This is sent as the X-GhostLLM-App header to identify the app configuration
+    var ghostllmApp: String?
+    
     // Credentials stored in config file (not using keychain)
     var clientSecret: String?
     var password: String?
@@ -29,6 +33,7 @@ struct AppConfig: Codable {
         realm: "dymium",
         refreshIntervalSeconds: 60, // 1 minute - well within the 5-minute access token lifetime
         llmEndpoint: "http://spoofcorp.llm.dymium.home:3000/v1",
+        ghostllmApp: nil, // Must be set to your GhostLLM app name for OIDC auth
         clientSecret: nil,
         password: nil,
         refreshToken: nil

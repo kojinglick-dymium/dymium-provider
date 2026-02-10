@@ -127,7 +127,7 @@ final class OpenCodeConfigService {
         return true
     }
     
-    /// Update the auth.json file with the current token
+    /// Update the auth.json file with the current token and GhostLLM app
     private func updateAuthJson() throws {
         let authPath = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".local/share/opencode/auth.json")
@@ -156,11 +156,23 @@ final class OpenCodeConfigService {
             return
         }
         
+        // Load config to get ghostllmApp
+        let config = AppConfig.load()
+        
         // Add/update dymium entry with proper format
-        auth["dymium"] = [
+        // Include the GhostLLM app name for X-GhostLLM-App header
+        var dymiumAuth: [String: Any] = [
             "type": "api",
             "key": token
         ]
+        
+        // Add ghostllmApp if configured (required for OIDC/JWT auth)
+        if let ghostllmApp = config.ghostllmApp, !ghostllmApp.isEmpty {
+            dymiumAuth["app"] = ghostllmApp
+            print("Including GhostLLM app in auth.json: \(ghostllmApp)")
+        }
+        
+        auth["dymium"] = dymiumAuth
         
         // Write back
         let jsonData = try JSONSerialization.data(

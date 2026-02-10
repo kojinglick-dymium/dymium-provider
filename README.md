@@ -84,10 +84,27 @@ Create `~/.dymium/config.json`:
   "username": "your-username@example.com",
   "refreshIntervalSeconds": 60,
   "llmEndpoint": "http://your-llm-endpoint:3000/v1",
+  "ghostllmApp": "your-ghostllm-app-name",
   "clientSecret": "your-client-secret",
   "password": "your-password"
 }
 ```
+
+#### Configuration Fields
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `keycloakURL` | Yes | Keycloak server URL |
+| `realm` | Yes | Keycloak realm name |
+| `clientId` | Yes | OAuth2 client ID |
+| `username` | Yes | Keycloak username |
+| `refreshIntervalSeconds` | No | Token refresh interval (default: 60) |
+| `llmEndpoint` | Yes | GhostLLM API endpoint URL |
+| `ghostllmApp` | Yes* | GhostLLM application name or ID (required for OIDC/JWT auth) |
+| `clientSecret` | Yes | OAuth2 client secret |
+| `password` | Yes | Keycloak password |
+
+*`ghostllmApp` is required when using Keycloak JWT tokens. This value is sent as the `X-GhostLLM-App` header to identify which GhostLLM application configuration to use for authorization.
 
 ### Usage
 
