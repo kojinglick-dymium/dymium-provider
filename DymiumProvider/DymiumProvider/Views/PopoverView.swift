@@ -203,6 +203,7 @@ struct SetupView: View {
     @State private var clientId: String = ""
     @State private var username: String = ""
     @State private var llmEndpoint: String = ""
+    @State private var ghostllmApp: String = ""
     
     // Secrets (stored in Keychain)
     @State private var clientSecret: String = ""
@@ -240,6 +241,7 @@ struct SetupView: View {
                             fieldRow(label: "Keycloak URL", placeholder: "https://192.168.50.100:9173", text: $keycloakURL)
                             fieldRow(label: "Username", placeholder: "user@example.com", text: $username)
                             fieldRow(label: "LLM Endpoint", placeholder: "http://spoofcorp.llm.dymium.home:3000/v1", text: $llmEndpoint)
+                            fieldRow(label: "GhostLLM App", placeholder: "your-ghostllm-app-name", text: $ghostllmApp)
                         }
                         .padding(.vertical, 4)
                     }
@@ -334,7 +336,8 @@ struct SetupView: View {
         !password.isEmpty &&
         !realm.isEmpty &&
         !clientId.isEmpty &&
-        !llmEndpoint.isEmpty
+        !llmEndpoint.isEmpty &&
+        !ghostllmApp.isEmpty
     }
     
     private func loadCurrentConfig() {
@@ -344,6 +347,7 @@ struct SetupView: View {
         clientId = config.clientId
         username = config.username
         llmEndpoint = config.llmEndpoint
+        ghostllmApp = config.ghostllmApp ?? ""
         // Secrets are not pre-filled for security
     }
     
@@ -364,6 +368,7 @@ struct SetupView: View {
                 clientId: clientId,
                 username: username,
                 llmEndpoint: llmEndpoint,
+                ghostllmApp: ghostllmApp,
                 clientSecret: clientSecret,
                 password: password
             )

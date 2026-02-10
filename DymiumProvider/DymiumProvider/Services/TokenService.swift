@@ -288,6 +288,7 @@ final class TokenService: ObservableObject {
         clientId: String,
         username: String,
         llmEndpoint: String,
+        ghostllmApp: String,
         clientSecret: String,
         password: String
     ) throws {
@@ -298,7 +299,8 @@ final class TokenService: ObservableObject {
             username: username,
             realm: realm,
             refreshIntervalSeconds: config.refreshIntervalSeconds,
-            llmEndpoint: llmEndpoint
+            llmEndpoint: llmEndpoint,
+            ghostllmApp: ghostllmApp.isEmpty ? nil : ghostllmApp
         )
         try newConfig.save()
         
