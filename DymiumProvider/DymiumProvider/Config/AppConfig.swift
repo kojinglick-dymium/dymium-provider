@@ -48,6 +48,75 @@ struct AppConfig: Codable {
     static let configPath = configDirectory.appendingPathComponent("config.json")
     static let tokenPath = configDirectory.appendingPathComponent("token")
     
+    // MARK: - Custom Decoding for Backward Compatibility
+    
+    enum CodingKeys: String, CodingKey {
+        case authMode, llmEndpoint, keycloakURL, clientId, username, realm
+        case refreshIntervalSeconds, ghostllmApp, clientSecret, password
+        case refreshToken, staticApiKey
+    }
+    
+    /// Custom decoder to handle old configs without authMode field
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        
+        // Decode all fields with defaults for optional/missing ones
+        self.llmEndpoint = try container.decodeIfPresent(String.self, forKey: .llmEndpoint) ?? ""
+        self.keycloakURL = try container.decodeIfPresent(String.self, forKey: .keycloakURL) ?? ""
+        self.clientId = try container.decodeIfPresent(String.self, forKey: .clientId) ?? ""
+        self.username = try container.decodeIfPresent(String.self, forKey: .username) ?? ""
+        self.realm = try container.decodeIfPresent(String.self, forKey: .realm) ?? ""
+        self.refreshIntervalSeconds = try container.decodeIfPresent(Int.self, forKey: .refreshIntervalSeconds) ?? 60
+        self.ghostllmApp = try container.decodeIfPresent(String.self, forKey: .ghostllmApp)
+        self.clientSecret = try container.decodeIfPresent(String.self, forKey: .clientSecret)
+        self.password = try container.decodeIfPresent(String.self, forKey: .password)
+        self.refreshToken = try container.decodeIfPresent(String.self, forKey: .refreshToken)
+        self.staticApiKey = try container.decodeIfPresent(String.self, forKey: .staticApiKey)
+        
+        // Decode authMode with smart default:
+        // - If authMode is explicitly set, use it
+        // - If staticApiKey is present, infer staticKey mode
+        // - Otherwise default to oauth
+        if let mode = try container.decodeIfPresent(AuthMode.self, forKey: .authMode) {
+            self.authMode = mode
+        } else if let apiKey = self.staticApiKey, !apiKey.isEmpty {
+            // Infer static key mode from presence of staticApiKey
+            self.authMode = .staticKey
+        } else {
+            // Default to OAuth for backward compatibility
+            self.authMode = .oauth
+        }
+    }
+    
+    /// Standard memberwise initializer
+    init(
+        authMode: AuthMode,
+        llmEndpoint: String,
+        keycloakURL: String,
+        clientId: String,
+        username: String,
+        realm: String,
+        refreshIntervalSeconds: Int,
+        ghostllmApp: String?,
+        clientSecret: String?,
+        password: String?,
+        refreshToken: String?,
+        staticApiKey: String?
+    ) {
+        self.authMode = authMode
+        self.llmEndpoint = llmEndpoint
+        self.keycloakURL = keycloakURL
+        self.clientId = clientId
+        self.username = username
+        self.realm = realm
+        self.refreshIntervalSeconds = refreshIntervalSeconds
+        self.ghostllmApp = ghostllmApp
+        self.clientSecret = clientSecret
+        self.password = password
+        self.refreshToken = refreshToken
+        self.staticApiKey = staticApiKey
+    }
+    
     /// Default configuration pointing to the local Keycloak instance
     static let `default` = AppConfig(
         authMode: .oauth,
