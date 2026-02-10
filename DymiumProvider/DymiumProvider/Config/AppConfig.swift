@@ -1,23 +1,46 @@
 import Foundation
 
+/// Authentication mode for GhostLLM
+enum AuthMode: String, Codable, CaseIterable {
+    case oauth = "oauth"
+    case staticKey = "staticKey"
+    
+    var displayName: String {
+        switch self {
+        case .oauth: return "OAuth (Keycloak)"
+        case .staticKey: return "Static API Key"
+        }
+    }
+}
+
 /// Configuration for the Dymium Provider app
 /// Loaded from ~/.dymium/config.json or uses defaults
 struct AppConfig: Codable {
+    /// Authentication mode: OAuth (Keycloak) or Static API Key
+    var authMode: AuthMode
+    
+    /// LLM endpoint URL (required for both modes)
+    var llmEndpoint: String
+    
+    // --- OAuth mode fields ---
     var keycloakURL: String
     var clientId: String
     var username: String
     var realm: String
     var refreshIntervalSeconds: Int
-    var llmEndpoint: String
     
     /// The GhostLLM application name or ID (required for OIDC/JWT auth)
     /// This is sent as the X-GhostLLM-App header to identify the app configuration
     var ghostllmApp: String?
     
-    // Credentials stored in config file (not using keychain)
+    // OAuth credentials
     var clientSecret: String?
     var password: String?
     var refreshToken: String?
+    
+    // --- Static API Key mode fields ---
+    /// Static API key for direct authentication (no token refresh needed)
+    var staticApiKey: String?
     
     static let configDirectory = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent(".dymium")
@@ -27,16 +50,18 @@ struct AppConfig: Codable {
     
     /// Default configuration pointing to the local Keycloak instance
     static let `default` = AppConfig(
+        authMode: .oauth,
+        llmEndpoint: "http://spoofcorp.llm.dymium.home:3000/v1",
         keycloakURL: "https://192.168.50.100:9173",
         clientId: "dymium",
         username: "dev_mcp_admin@dymium.io",
         realm: "dymium",
         refreshIntervalSeconds: 60, // 1 minute - well within the 5-minute access token lifetime
-        llmEndpoint: "http://spoofcorp.llm.dymium.home:3000/v1",
         ghostllmApp: nil, // Must be set to your GhostLLM app name for OIDC auth
         clientSecret: nil,
         password: nil,
-        refreshToken: nil
+        refreshToken: nil,
+        staticApiKey: nil
     )
     
     /// Load configuration from disk or return defaults
@@ -63,9 +88,19 @@ struct AppConfig: Codable {
         try data.write(to: AppConfig.configPath)
     }
     
-    /// The full token endpoint URL
+    /// The full token endpoint URL (OAuth mode only)
     var tokenEndpointURL: URL? {
         URL(string: "\(keycloakURL)/realms/\(realm)/protocol/openid-connect/token")
+    }
+    
+    /// Whether using static API key authentication
+    var isStaticKeyMode: Bool {
+        authMode == .staticKey
+    }
+    
+    /// Whether using OAuth authentication
+    var isOAuthMode: Bool {
+        authMode == .oauth
     }
 }
 

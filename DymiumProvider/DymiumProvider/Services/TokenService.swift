@@ -32,9 +32,17 @@ final class TokenService: ObservableObject {
         self.config = AppConfig.load()
     }
     
-    /// Start the token refresh loop
+    /// Start the token refresh loop (or just set static key)
     func startRefreshLoop() {
-        // Immediately attempt authentication
+        // For static API key mode, just write the key and we're done
+        if config.isStaticKeyMode {
+            Task {
+                await setupStaticApiKey()
+            }
+            return
+        }
+        
+        // OAuth mode: Immediately attempt authentication
         Task {
             await authenticate()
         }
@@ -49,6 +57,56 @@ final class TokenService: ObservableObject {
                 await self?.refreshTokenIfNeeded()
             }
         }
+    }
+    
+    /// Set up static API key mode (no token refresh needed)
+    private func setupStaticApiKey() async {
+        guard let apiKey = config.staticApiKey, !apiKey.isEmpty else {
+            state = .failed(error: "No static API key configured")
+            return
+        }
+        
+        state = .authenticating
+        
+        // Write the static API key as the token
+        do {
+            try TokenWriter.shared.writeToken(apiKey)
+            print("[TokenService] Static API key written to \(AppConfig.tokenPath.path)")
+        } catch {
+            print("[TokenService] Failed to write static API key to disk: \(error)")
+            state = .failed(error: error.localizedDescription)
+            return
+        }
+        
+        // Ensure opencode config has the dymium provider
+        do {
+            try OpenCodeConfigService.shared.ensureDymiumProvider()
+        } catch {
+            print("[TokenService] Failed to ensure opencode config: \(error)")
+        }
+        
+        // Update auth.json with the static key
+        OpenCodeConfigService.shared.updateToken()
+        print("[TokenService] Updated auth.json with static API key")
+        
+        // Sync available models from the LLM endpoint
+        Task {
+            do {
+                let updated = try await ModelSyncService.shared.syncModels(token: apiKey)
+                if updated {
+                    print("[TokenService] Model sync completed - config was updated")
+                } else {
+                    print("[TokenService] Model sync completed - no changes needed")
+                }
+            } catch {
+                print("[TokenService] Model sync failed: \(error)")
+            }
+        }
+        
+        // Static keys don't expire, so use a far-future date
+        let farFuture = Date().addingTimeInterval(365 * 24 * 60 * 60) // 1 year
+        state = .authenticated(token: apiKey, expiresAt: farFuture)
+        lastRefreshTime = Date()
     }
     
     /// Stop the refresh loop
@@ -281,8 +339,8 @@ final class TokenService: ObservableObject {
         return try JSONDecoder().decode(KeycloakTokenResponse.self, from: data)
     }
     
-    /// Save configuration and credentials (called from setup UI)
-    func saveSetup(
+    /// Save OAuth configuration and credentials (called from setup UI)
+    func saveOAuthSetup(
         keycloakURL: String,
         realm: String,
         clientId: String,
@@ -294,20 +352,25 @@ final class TokenService: ObservableObject {
     ) throws {
         // Save config to disk
         let newConfig = AppConfig(
+            authMode: .oauth,
+            llmEndpoint: llmEndpoint,
             keycloakURL: keycloakURL,
             clientId: clientId,
             username: username,
             realm: realm,
             refreshIntervalSeconds: config.refreshIntervalSeconds,
-            llmEndpoint: llmEndpoint,
-            ghostllmApp: ghostllmApp.isEmpty ? nil : ghostllmApp
+            ghostllmApp: ghostllmApp.isEmpty ? nil : ghostllmApp,
+            clientSecret: nil,
+            password: nil,
+            refreshToken: nil,
+            staticApiKey: nil
         )
         try newConfig.save()
         
         // Update in-memory config
         self.config = newConfig
         
-        // Save secrets to config file
+        // Save secrets to keychain
         try keychain.save(clientSecret, forKey: CredentialKey.clientSecret)
         try keychain.save(password, forKey: CredentialKey.password)
         
@@ -315,9 +378,44 @@ final class TokenService: ObservableObject {
         try? keychain.delete(key: CredentialKey.refreshToken)
     }
     
-    /// Check if credentials are configured
+    /// Save static API key configuration (called from setup UI)
+    func saveStaticKeySetup(
+        llmEndpoint: String,
+        staticApiKey: String
+    ) throws {
+        // Save config to disk
+        let newConfig = AppConfig(
+            authMode: .staticKey,
+            llmEndpoint: llmEndpoint,
+            keycloakURL: "",
+            clientId: "",
+            username: "",
+            realm: "",
+            refreshIntervalSeconds: config.refreshIntervalSeconds,
+            ghostllmApp: nil,
+            clientSecret: nil,
+            password: nil,
+            refreshToken: nil,
+            staticApiKey: staticApiKey
+        )
+        try newConfig.save()
+        
+        // Update in-memory config
+        self.config = newConfig
+        
+        // Clear any OAuth credentials
+        try? keychain.delete(key: CredentialKey.clientSecret)
+        try? keychain.delete(key: CredentialKey.password)
+        try? keychain.delete(key: CredentialKey.refreshToken)
+    }
+    
+    /// Check if credentials are configured (based on auth mode)
     var hasCredentials: Bool {
-        keychain.exists(key: CredentialKey.clientSecret) && keychain.exists(key: CredentialKey.password)
+        if config.isStaticKeyMode {
+            return config.staticApiKey != nil && !config.staticApiKey!.isEmpty
+        } else {
+            return keychain.exists(key: CredentialKey.clientSecret) && keychain.exists(key: CredentialKey.password)
+        }
     }
 }
 

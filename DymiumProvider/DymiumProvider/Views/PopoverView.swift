@@ -197,17 +197,23 @@ struct SetupView: View {
     @Binding var isPresented: Bool
     @Environment(\.dismiss) private var dismiss
     
-    // Connection settings
+    // Auth mode selection
+    @State private var selectedAuthMode: AuthMode = .oauth
+    
+    // Common settings
+    @State private var llmEndpoint: String = ""
+    
+    // OAuth mode settings
     @State private var keycloakURL: String = ""
     @State private var realm: String = ""
     @State private var clientId: String = ""
     @State private var username: String = ""
-    @State private var llmEndpoint: String = ""
     @State private var ghostllmApp: String = ""
-    
-    // Secrets (stored in Keychain)
     @State private var clientSecret: String = ""
     @State private var password: String = ""
+    
+    // Static API Key mode settings
+    @State private var staticApiKey: String = ""
     
     @State private var errorMessage: String?
     @State private var isSaving = false
@@ -225,7 +231,7 @@ struct SetupView: View {
                     Text("Dymium Setup")
                         .font(.title2)
                         .fontWeight(.semibold)
-                    Text("Configure your Keycloak connection")
+                    Text("Configure your GhostLLM connection")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -233,55 +239,42 @@ struct SetupView: View {
             
             Divider()
             
+            // Auth Mode Picker
+            Picker("Authentication", selection: $selectedAuthMode) {
+                ForEach(AuthMode.allCases, id: \.self) { mode in
+                    Text(mode.displayName).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+            
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    // Connection Settings
-                    GroupBox("Connection") {
+                    // Common: LLM Endpoint
+                    GroupBox("Endpoint") {
                         VStack(alignment: .leading, spacing: 12) {
-                            fieldRow(label: "Keycloak URL", placeholder: "https://192.168.50.100:9173", text: $keycloakURL)
-                            fieldRow(label: "Username", placeholder: "user@example.com", text: $username)
                             fieldRow(label: "LLM Endpoint", placeholder: "http://spoofcorp.llm.dymium.home:3000/v1", text: $llmEndpoint)
-                            fieldRow(label: "GhostLLM App", placeholder: "your-ghostllm-app-name", text: $ghostllmApp)
                         }
                         .padding(.vertical, 4)
                     }
                     
-                    // Credentials (secrets)
-                    GroupBox("Credentials") {
-                        VStack(alignment: .leading, spacing: 12) {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Client Secret")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                SecureField("Client secret from Keycloak", text: $clientSecret)
-                                    .textFieldStyle(.roundedBorder)
-                            }
-                            
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Password")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                SecureField("Your password", text: $password)
-                                    .textFieldStyle(.roundedBorder)
-                            }
-                        }
-                        .padding(.vertical, 4)
-                    }
-                    
-                    // Advanced settings (collapsible)
-                    DisclosureGroup("Advanced Settings", isExpanded: $showAdvanced) {
-                        VStack(alignment: .leading, spacing: 12) {
-                            fieldRow(label: "Realm", placeholder: "dymium", text: $realm)
-                            fieldRow(label: "Client ID", placeholder: "dymium", text: $clientId)
-                        }
-                        .padding(.top, 8)
+                    if selectedAuthMode == .oauth {
+                        oauthSettingsView
+                    } else {
+                        staticKeySettingsView
                     }
                     
                     // Info text
-                    Text("Secrets are stored securely in the macOS Keychain. Configuration is saved to ~/.dymium/config.json")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                        .padding(.top, 8)
+                    if selectedAuthMode == .oauth {
+                        Text("OAuth credentials are stored securely in the macOS Keychain. Tokens refresh automatically.")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                            .padding(.top, 8)
+                    } else {
+                        Text("Static API key is stored in ~/.dymium/config.json. No automatic refresh needed.")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                            .padding(.top, 8)
+                    }
                 }
             }
             .frame(maxHeight: 320)
@@ -312,11 +305,81 @@ struct SetupView: View {
             }
         }
         .padding(20)
-        .frame(width: 420, height: 520)
+        .frame(width: 420, height: 560)
         .onAppear {
             loadCurrentConfig()
         }
     }
+    
+    // MARK: - OAuth Settings View
+    
+    @ViewBuilder
+    private var oauthSettingsView: some View {
+        // OAuth Connection Settings
+        GroupBox("Keycloak Connection") {
+            VStack(alignment: .leading, spacing: 12) {
+                fieldRow(label: "Keycloak URL", placeholder: "https://192.168.50.100:9173", text: $keycloakURL)
+                fieldRow(label: "Username", placeholder: "user@example.com", text: $username)
+                fieldRow(label: "GhostLLM App", placeholder: "your-ghostllm-app-name", text: $ghostllmApp)
+            }
+            .padding(.vertical, 4)
+        }
+        
+        // OAuth Credentials
+        GroupBox("Credentials") {
+            VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Client Secret")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    SecureField("Client secret from Keycloak", text: $clientSecret)
+                        .textFieldStyle(.roundedBorder)
+                }
+                
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Password")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    SecureField("Your password", text: $password)
+                        .textFieldStyle(.roundedBorder)
+                }
+            }
+            .padding(.vertical, 4)
+        }
+        
+        // Advanced settings (collapsible)
+        DisclosureGroup("Advanced Settings", isExpanded: $showAdvanced) {
+            VStack(alignment: .leading, spacing: 12) {
+                fieldRow(label: "Realm", placeholder: "dymium", text: $realm)
+                fieldRow(label: "Client ID", placeholder: "dymium", text: $clientId)
+            }
+            .padding(.top, 8)
+        }
+    }
+    
+    // MARK: - Static API Key Settings View
+    
+    @ViewBuilder
+    private var staticKeySettingsView: some View {
+        GroupBox("API Key") {
+            VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Static API Key")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    SecureField("Your GhostLLM API key", text: $staticApiKey)
+                        .textFieldStyle(.roundedBorder)
+                }
+                
+                Text("Get your API key from the GhostLLM admin portal.")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+            .padding(.vertical, 4)
+        }
+    }
+    
+    // MARK: - Helper Views
     
     @ViewBuilder
     private func fieldRow(label: String, placeholder: String, text: Binding<String>) -> some View {
@@ -329,26 +392,43 @@ struct SetupView: View {
         }
     }
     
+    // MARK: - Validation
+    
     private var isFormValid: Bool {
-        !keycloakURL.isEmpty &&
-        !username.isEmpty &&
-        !clientSecret.isEmpty &&
-        !password.isEmpty &&
-        !realm.isEmpty &&
-        !clientId.isEmpty &&
-        !llmEndpoint.isEmpty &&
-        !ghostllmApp.isEmpty
+        // Common validation
+        guard !llmEndpoint.isEmpty else { return false }
+        
+        if selectedAuthMode == .oauth {
+            return !keycloakURL.isEmpty &&
+                   !username.isEmpty &&
+                   !clientSecret.isEmpty &&
+                   !password.isEmpty &&
+                   !realm.isEmpty &&
+                   !clientId.isEmpty &&
+                   !ghostllmApp.isEmpty
+        } else {
+            return !staticApiKey.isEmpty
+        }
     }
+    
+    // MARK: - Actions
     
     private func loadCurrentConfig() {
         let config = tokenService.config
+        selectedAuthMode = config.authMode
+        llmEndpoint = config.llmEndpoint
+        
+        // OAuth fields
         keycloakURL = config.keycloakURL
         realm = config.realm
         clientId = config.clientId
         username = config.username
-        llmEndpoint = config.llmEndpoint
         ghostllmApp = config.ghostllmApp ?? ""
-        // Secrets are not pre-filled for security
+        
+        // Static key field
+        staticApiKey = config.staticApiKey ?? ""
+        
+        // Secrets are not pre-filled for security (except static key which is in config)
     }
     
     private func closeWindow() {
@@ -362,23 +442,30 @@ struct SetupView: View {
         errorMessage = nil
         
         do {
-            try tokenService.saveSetup(
-                keycloakURL: keycloakURL,
-                realm: realm,
-                clientId: clientId,
-                username: username,
-                llmEndpoint: llmEndpoint,
-                ghostllmApp: ghostllmApp,
-                clientSecret: clientSecret,
-                password: password
-            )
+            if selectedAuthMode == .oauth {
+                try tokenService.saveOAuthSetup(
+                    keycloakURL: keycloakURL,
+                    realm: realm,
+                    clientId: clientId,
+                    username: username,
+                    llmEndpoint: llmEndpoint,
+                    ghostllmApp: ghostllmApp,
+                    clientSecret: clientSecret,
+                    password: password
+                )
+            } else {
+                try tokenService.saveStaticKeySetup(
+                    llmEndpoint: llmEndpoint,
+                    staticApiKey: staticApiKey
+                )
+            }
             
             // Close the window
             closeWindow()
             
-            // Trigger authentication
+            // Trigger authentication / static key setup
             Task {
-                await tokenService.manualRefresh()
+                tokenService.startRefreshLoop()
             }
         } catch {
             errorMessage = error.localizedDescription
