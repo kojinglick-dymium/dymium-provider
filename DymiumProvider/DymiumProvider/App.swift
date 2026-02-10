@@ -8,6 +8,8 @@ extension NSColor {
     static let dymiumPrimary = NSColor(red: 0x43/255, green: 0x69/255, blue: 0xff/255, alpha: 1.0)
     /// Dymium accent purple #904dff
     static let dymiumAccent = NSColor(red: 0x90/255, green: 0x4d/255, blue: 0xff/255, alpha: 1.0)
+    /// Dymium danger red #dc3545
+    static let dymiumDanger = NSColor(red: 0xdc/255, green: 0x35/255, blue: 0x45/255, alpha: 1.0)
 }
 
 @main
@@ -43,17 +45,26 @@ struct MenuBarIcon: View {
     
     @State private var gradientPhase: CGFloat = 0
     
+    /// Computed property to get a simple state category for forcing re-render
+    private var stateCategory: String {
+        switch state {
+        case .idle: return "idle"
+        case .authenticating: return "authenticating"
+        case .authenticated: return "authenticated"
+        case .failed: return "failed"
+        }
+    }
+    
     var body: some View {
         Image(nsImage: createGhostImage())
+            .id(stateCategory) // Force re-render when state category changes
             .onAppear {
                 if state.isAuthenticating {
                     startGradientAnimation()
                 }
             }
-            .onChange(of: state) { newState in
-                if newState.isAuthenticating {
-                    startGradientAnimation()
-                }
+            .onChange(of: stateCategory) { _ in
+                // Force image refresh on state change
             }
     }
     
@@ -74,9 +85,17 @@ struct MenuBarIcon: View {
             
             // Set up stroke based on state
             switch self.state {
-            case .idle, .failed:
-                // Gray outline
+            case .idle:
+                // Gray outline for idle
                 NSColor.systemGray.setStroke()
+                path.lineWidth = strokeWidth
+                path.lineCapStyle = .round
+                path.lineJoinStyle = .round
+                path.stroke()
+                
+            case .failed:
+                // Red outline for failed/error state
+                NSColor.dymiumDanger.setStroke()
                 path.lineWidth = strokeWidth
                 path.lineCapStyle = .round
                 path.lineJoinStyle = .round
