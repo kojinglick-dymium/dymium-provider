@@ -117,6 +117,12 @@ final class TokenService: ObservableObject {
     
     /// Manually trigger a refresh
     func manualRefresh() async {
+        // For static API key mode, just re-setup the key (no OAuth needed)
+        if config.isStaticKeyMode {
+            await setupStaticApiKey()
+            return
+        }
+        
         await authenticate()
     }
     
@@ -179,6 +185,11 @@ final class TokenService: ObservableObject {
     
     /// Refresh token only if needed (called by timer)
     private func refreshTokenIfNeeded() async {
+        // Static key mode doesn't need OAuth refresh
+        if config.isStaticKeyMode {
+            return
+        }
+        
         // Skip if we're already authenticating
         if case .authenticating = state { return }
         
