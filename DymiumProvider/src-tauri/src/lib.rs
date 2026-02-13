@@ -158,9 +158,15 @@ pub fn run() {
             // Build the tray menu
             let menu = build_tray_menu(app.handle())?;
 
+            // Load tray icon from embedded PNG bytes
+            let icon_bytes = include_bytes!("../icons/icon.png");
+            let icon = tauri::image::Image::from_bytes(icon_bytes)
+                .expect("Failed to load tray icon");
+
             // Create the tray icon
-            // For now, use a simple icon - we'll generate the gradient ghost later
             let _tray = TrayIconBuilder::with_id("main")
+                .icon(icon)
+                .icon_as_template(true) // Use as template for macOS menu bar (respects dark/light mode)
                 .menu(&menu)
                 .show_menu_on_left_click(true)
                 .on_menu_event(move |app, event| {
