@@ -158,8 +158,8 @@ pub fn run() {
             // Build the tray menu
             let menu = build_tray_menu(app.handle())?;
 
-            // Load tray icon from embedded PNG bytes
-            let icon_bytes = include_bytes!("../icons/icon.png");
+            // Load tray icon from embedded PNG bytes (44x44 for retina displays)
+            let icon_bytes = include_bytes!("../icons/tray-icon.png");
             let icon = tauri::image::Image::from_bytes(icon_bytes)
                 .expect("Failed to load tray icon");
 
