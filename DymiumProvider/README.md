@@ -48,7 +48,13 @@ chmod +x dymium-provider_*.AppImage
 
 1. Open the `.dmg` file
 2. Drag "Dymium Provider" to your Applications folder
-3. On first launch, right-click and select "Open" to bypass Gatekeeper
+3. **Important: Clear the quarantine attribute** (required for unsigned apps):
+   ```bash
+   xattr -cr "/Applications/Dymium Provider.app"
+   ```
+4. Launch the app - it will appear in your menu bar
+
+> **Note:** The app is not yet code-signed with an Apple Developer certificate. Without step 3, macOS will show "Dymium Provider is damaged and can't be opened." This is a Gatekeeper protection for unsigned apps, not actual damage.
 
 ---
 
@@ -229,6 +235,16 @@ This file is updated automatically whenever the token refreshes.
 ---
 
 ## Troubleshooting
+
+### macOS: "Dymium Provider is damaged and can't be opened"
+
+This error occurs because the app is not code-signed with an Apple Developer certificate. Fix it by removing the quarantine attribute:
+
+```bash
+xattr -cr "/Applications/Dymium Provider.app"
+```
+
+Then launch the app normally.
 
 ### "dymium" provider not appearing in OpenCode
 
