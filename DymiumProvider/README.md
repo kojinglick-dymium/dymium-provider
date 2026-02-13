@@ -58,11 +58,11 @@ chmod +x dymium-provider_*.AppImage
 
 ---
 
-## Prerequisites: Install OpenCode First
+## Prerequisites
+
+### 1. Install OpenCode First
 
 **Important:** Dymium Provider integrates with OpenCode by automatically creating configuration files. For this to work correctly, **OpenCode must be installed first**.
-
-### Install OpenCode
 
 ```bash
 # Using npm
@@ -81,6 +81,17 @@ opencode --version
 This ensures the following directories exist:
 - `~/.config/opencode/` (config directory)
 - `~/.local/share/opencode/` (data directory)
+
+### 2. Get Your Credentials
+
+You need **one** of the following from your GhostLLM administrator:
+
+| Auth Method | What You Need |
+|-------------|---------------|
+| **Static API Key** (simpler) | API key + LLM endpoint URL |
+| **OAuth (Keycloak)** (enterprise) | Keycloak URL, username, password, client secret, GhostLLM app name, LLM endpoint URL |
+
+> **Not sure which to use?** If your organization uses Keycloak for single sign-on, use OAuth. Otherwise, ask your admin for a static API key.
 
 ---
 
