@@ -355,12 +355,6 @@ DymiumProvider/
 
 ---
 
-## Legacy macOS App
-
-The original native SwiftUI macOS app is archived at `../DymiumProviderMacOS/` for reference.
-
----
-
 ## License
 
 MIT
