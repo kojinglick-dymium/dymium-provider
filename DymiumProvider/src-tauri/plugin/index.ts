@@ -19,11 +19,16 @@ function log(message: string) {
   } catch {}
 }
 
+interface DymiumAuth {
+  key: string
+  app?: string
+}
+
 /**
- * Read the current Dymium token from auth.json
- * This is called on EVERY request to ensure we always have a fresh token
+ * Read the current Dymium auth from auth.json
+ * This is called on EVERY request to ensure we always have fresh credentials
  */
-function getDymiumToken(): string | null {
+function getDymiumAuth(): DymiumAuth | null {
   try {
     if (!fs.existsSync(AUTH_JSON_PATH)) {
       log(`auth.json not found at ${AUTH_JSON_PATH}`)
@@ -34,7 +39,10 @@ function getDymiumToken(): string | null {
     const auth = JSON.parse(content)
     
     if (auth.dymium?.key) {
-      return auth.dymium.key
+      return {
+        key: auth.dymium.key,
+        app: auth.dymium.app || undefined
+      }
     }
     
     log("No dymium.key found in auth.json")
@@ -43,6 +51,23 @@ function getDymiumToken(): string | null {
     log(`Failed to read auth.json: ${error}`)
     return null
   }
+}
+
+/**
+ * Inject the app name into the URL path
+ * Transforms: /v1/models -> /{app}/v1/models
+ */
+function injectAppIntoPath(pathname: string, app: string): string {
+  // If path already starts with the app, don't double-inject
+  if (pathname.startsWith(`/${app}/`)) {
+    return pathname
+  }
+  // Insert app before /v1/ if present
+  if (pathname.startsWith("/v1/") || pathname === "/v1") {
+    return `/${app}${pathname}`
+  }
+  // For other paths, prepend the app
+  return `/${app}${pathname}`
 }
 
 /**
@@ -142,19 +167,29 @@ function http11Request(
 /**
  * Custom fetch function that injects the fresh Dymium token on every request
  * Uses HTTP/1.1 to avoid issues with kubectl port-forward
+ * Also injects the app name into the URL path if configured
  */
 async function dymiumFetch(
   input: RequestInfo | URL,
   init?: RequestInit
 ): Promise<Response> {
-  const token = getDymiumToken()
+  const auth = getDymiumAuth()
   
-  if (!token) {
+  if (!auth) {
     throw new Error("[dymium-auth] No valid Dymium token available. Please ensure the Dymium Provider app is running.")
   }
   
   // Parse the URL
   const url = typeof input === "string" ? new URL(input) : input instanceof URL ? input : new URL(input.url)
+  
+  // Inject app name into URL path if configured
+  if (auth.app) {
+    const newPath = injectAppIntoPath(url.pathname, auth.app)
+    if (newPath !== url.pathname) {
+      log(`Rewriting path: ${url.pathname} -> ${newPath}`)
+      url.pathname = newPath
+    }
+  }
   
   // Build headers object - start with defaults for OpenAI-compatible API
   const headers: Record<string, string> = {
@@ -171,7 +206,7 @@ async function dymiumFetch(
   }
   
   // Set authorization (overwrite any existing)
-  headers["Authorization"] = `Bearer ${token}`
+  headers["Authorization"] = `Bearer ${auth.key}`
   
   // Get body as string if present
   let body: string | undefined
@@ -206,6 +241,7 @@ async function dymiumFetch(
  * 
  * Uses HTTP/1.1 explicitly to work with kubectl port-forward.
  * Sets Host header to hostname only (without port) for Istio compatibility.
+ * Injects the app name into URL paths (e.g., /v1/models -> /{app}/v1/models)
  */
 export default async function plugin({ client, project, directory }: any) {
   log(`Plugin initialized for project: ${project?.name || directory}`)

@@ -134,6 +134,7 @@ function App() {
         await invoke("save_static_key_config", {
           llmEndpoint,
           staticApiKey,
+          ghostllmApp: ghostllmApp || null,
         });
       }
 
@@ -176,7 +177,7 @@ function App() {
 
   const isFormValid = authMode === "OAuth"
     ? llmEndpoint && keycloakUrl && username && clientSecret && password && realm && clientId && ghostllmApp
-    : llmEndpoint && staticApiKey;
+    : llmEndpoint && staticApiKey && ghostllmApp;
 
   const hasCredentials = config && (
     authMode === "OAuth"
@@ -333,6 +334,15 @@ function App() {
                   value={staticApiKey}
                   onChange={(e) => setStaticApiKey(e.target.value)}
                   placeholder="Your GhostLLM API key"
+                />
+              </div>
+              <div className="field">
+                <label>GhostLLM App</label>
+                <input
+                  type="text"
+                  value={ghostllmApp}
+                  onChange={(e) => setGhostllmApp(e.target.value)}
+                  placeholder="Application name (e.g., static_testing)"
                 />
               </div>
             </div>

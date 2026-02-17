@@ -68,10 +68,11 @@ async fn save_static_key_config(
     state: State<'_, AppState>,
     llm_endpoint: String,
     static_api_key: String,
+    ghostllm_app: Option<String>,
 ) -> Result<(), String> {
     let mut service = state.token_service.lock().await;
     service
-        .save_static_key_setup(llm_endpoint, static_api_key)
+        .save_static_key_setup(llm_endpoint, static_api_key, ghostllm_app)
         .map_err(|e| e.to_string())
 }
 

@@ -392,10 +392,12 @@ impl TokenService {
         &mut self,
         llm_endpoint: String,
         static_api_key: String,
+        ghostllm_app: Option<String>,
     ) -> Result<(), TokenError> {
         self.config.auth_mode = AuthMode::StaticKey;
         self.config.llm_endpoint = llm_endpoint;
         self.config.static_api_key = Some(static_api_key);
+        self.config.ghostllm_app = ghostllm_app;
         self.config.client_secret = None;
         self.config.password = None;
         self.config.refresh_token = None;
