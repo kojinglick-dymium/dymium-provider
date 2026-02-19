@@ -6,6 +6,7 @@
 mod services;
 
 use services::config::{AppConfig, TokenState};
+use services::opencode::OpenCodeService;
 use services::token::TokenService;
 use std::sync::Arc;
 use tauri::{
@@ -211,11 +212,20 @@ pub fn run() {
                 })
                 .build(app)?;
 
-            // Start the token refresh loop in background
+            // Sync managed files and start token refresh loop in background
             let app_handle = app.handle().clone();
             let ts = app.state::<AppState>().token_service.clone();
             tauri::async_runtime::spawn(async move {
                 let mut service = ts.lock().await;
+
+                // Always sync opencode.json and auth.json on startup
+                // This ensures config files are up to date after upgrades
+                // without requiring the user to re-save
+                let config = service.config().clone();
+                if let Err(e) = OpenCodeService::ensure_dymium_provider(&config) {
+                    log::warn!("Failed to sync OpenCode config on startup: {}", e);
+                }
+
                 if service.has_credentials() {
                     log::info!("Starting token refresh loop...");
                     if let Err(e) = service.start_refresh_loop().await {

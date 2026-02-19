@@ -138,8 +138,8 @@ impl OpenCodeService {
             log::info!("Added dymium provider to opencode.json");
         }
 
-        // Ensure plugin is registered
-        let plugin_url = format!("file://{}", Self::plugin_dir()?.display());
+        // Ensure plugin is registered via npm
+        let npm_plugin = "dymium-auth-plugin@latest";
         let plugins = opencode_config
             .as_object_mut()
             .unwrap()
@@ -147,14 +147,28 @@ impl OpenCodeService {
             .or_insert_with(|| json!([]));
 
         let plugins_array = plugins.as_array_mut().unwrap();
-        if !plugins_array.iter().any(|p| {
-            p.as_str()
+
+        // Remove any stale file:// plugin entries
+        let old_len = plugins_array.len();
+        plugins_array.retain(|p| {
+            !p.as_str()
                 .map(|s| s.contains("dymium-opencode-plugin"))
                 .unwrap_or(false)
-        }) {
-            plugins_array.push(json!(plugin_url));
+        });
+        if plugins_array.len() != old_len {
             changed = true;
-            log::info!("Registered dymium auth plugin: {}", plugin_url);
+            log::info!("Removed stale file:// dymium plugin entry");
+        }
+
+        // Add npm plugin if not already present
+        if !plugins_array.iter().any(|p| {
+            p.as_str()
+                .map(|s| s.contains("dymium-auth-plugin"))
+                .unwrap_or(false)
+        }) {
+            plugins_array.push(json!(npm_plugin));
+            changed = true;
+            log::info!("Registered dymium auth plugin via npm: {}", npm_plugin);
         }
 
         // Write config if changed
@@ -382,6 +396,40 @@ export default async function plugin({ client, project, directory }: any) {
 
     /// Update the auth.json file with the current token
     fn update_auth_json(config: &AppConfig) -> Result<(), OpenCodeError> {
+        // Resolve the token: try the token file first, fall back to static key from config
+        let token = Self::resolve_token(config)?;
+        Self::write_auth_json(config, &token)
+    }
+
+    /// Resolve the current token from available sources
+    fn resolve_token(config: &AppConfig) -> Result<String, OpenCodeError> {
+        // Try reading from the token file first
+        if let Ok(token_path) = AppConfig::token_path() {
+            if let Ok(content) = fs::read_to_string(&token_path) {
+                let token = content.trim().to_string();
+                if !token.is_empty() {
+                    return Ok(token);
+                }
+            }
+        }
+
+        // Fall back to static API key from config if in static key mode
+        if config.is_static_key_mode() {
+            if let Some(ref key) = config.static_api_key {
+                if !key.is_empty() {
+                    return Ok(key.clone());
+                }
+            }
+        }
+
+        Err(OpenCodeError::IoError(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "No token available (token file missing and no static API key configured)",
+        )))
+    }
+
+    /// Write the dymium entry to auth.json
+    fn write_auth_json(config: &AppConfig, token: &str) -> Result<(), OpenCodeError> {
         let auth_path = Self::auth_path()?;
 
         // Ensure directory exists
@@ -396,21 +444,6 @@ export default async function plugin({ client, project, directory }: any) {
         } else {
             json!({})
         };
-
-        // Read the current token - fail if not available
-        let token_path = AppConfig::token_path().map_err(|_| OpenCodeError::NoHomeDir)?;
-        let token = fs::read_to_string(&token_path).map_err(|e| {
-            log::error!("Failed to read token file: {}", e);
-            OpenCodeError::IoError(e)
-        })?;
-
-        let token = token.trim().to_string();
-        if token.is_empty() {
-            return Err(OpenCodeError::IoError(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "Token file is empty",
-            )));
-        }
 
         // Determine auth type based on config mode
         let auth_type = if config.is_static_key_mode() {
