@@ -8,7 +8,7 @@ import "./App.css";
 type AuthMode = "OAuth" | "StaticKey";
 
 interface TokenState {
-  type: "idle" | "authenticating" | "authenticated" | "failed";
+  type: "idle" | "authenticating" | "verifying" | "authenticated" | "failed";
   token?: string;
   expiresAt?: string;
   error?: string;
@@ -31,7 +31,7 @@ interface AppConfig {
 // Ghost icon component
 function GhostIcon({ state }: { state: TokenState }) {
   const stateClass = state.type === "authenticated" ? "authenticated" 
-    : state.type === "authenticating" ? "authenticating"
+    : state.type === "authenticating" || state.type === "verifying" ? "authenticating"
     : state.type === "failed" ? "failed" 
     : "idle";
 
@@ -353,12 +353,21 @@ function App() {
           </>
         )}
 
-        {/* Status (when authenticated) */}
+        {/* Status display */}
+        {tokenState.type === "verifying" && (
+          <div className="status-section">
+            <div className="status-row">
+              <span className="label">Status:</span>
+              <span className="value warning">Verifying endpoint...</span>
+            </div>
+          </div>
+        )}
+
         {tokenState.type === "authenticated" && (
           <div className="status-section">
             <div className="status-row">
               <span className="label">Status:</span>
-              <span className="value success">Authenticated</span>
+              <span className="value success">Connected</span>
             </div>
             {tokenState.expiresAt && (
               <div className="status-row">

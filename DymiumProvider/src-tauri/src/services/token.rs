@@ -85,42 +85,55 @@ impl TokenService {
 
     /// Start the token refresh loop (or just set static key)
     pub async fn start_refresh_loop(&mut self) -> Result<(), TokenError> {
-        if self.config.is_static_key_mode() {
-            self.setup_static_api_key()?;
+        let result = if self.config.is_static_key_mode() {
+            self.setup_static_api_key().await
         } else {
-            self.authenticate().await?;
+            self.authenticate().await
+        };
+
+        if let Err(ref e) = result {
+            self.state = TokenState::Failed {
+                error: e.to_string(),
+            };
         }
-        Ok(())
+
+        result
     }
 
     /// Set up static API key mode
-    fn setup_static_api_key(&mut self) -> Result<(), TokenError> {
+    async fn setup_static_api_key(&mut self) -> Result<(), TokenError> {
         let api_key = self
             .config
             .static_api_key
             .as_ref()
             .filter(|s| !s.is_empty())
-            .ok_or_else(|| TokenError::ConfigError("No static API key configured".to_string()))?;
+            .ok_or_else(|| TokenError::ConfigError("No static API key configured".to_string()))?
+            .clone();
 
         self.state = TokenState::Authenticating;
 
         // Write the static API key as the token
-        self.write_token(api_key)?;
+        self.write_token(&api_key)?;
         log::info!("Static API key written to token file");
 
-        // Ensure OpenCode config and update auth.json - these must succeed
+        // Ensure OpenCode config and update auth.json
         OpenCodeService::ensure_dymium_provider(&self.config)
             .map_err(|e| TokenError::ConfigError(format!("Failed to update OpenCode config: {}", e)))?;
 
-        log::info!("Updated auth.json with static API key");
+        log::info!("Updated opencode.json with static API key");
+
+        // Verify the endpoint actually works before declaring success
+        self.state = TokenState::Verifying;
+        self.verify_endpoint(&api_key).await?;
 
         // Static keys don't expire, so use a far-future date
         let far_future = Utc::now() + Duration::days(365);
         self.state = TokenState::Authenticated {
-            token: api_key.clone(),
+            token: api_key,
             expires_at: far_future,
         };
         self.last_refresh = Some(Utc::now());
+        log::info!("Static API key verified and authenticated");
 
         Ok(())
     }
@@ -138,7 +151,7 @@ impl TokenService {
                         "Refresh token grant succeeded, token expires in {}s",
                         response.expires_in
                     );
-                    self.handle_successful_auth(response)?;
+                    self.handle_successful_auth(response).await?;
                     return Ok(());
                 }
                 Err(e) => {
@@ -156,13 +169,13 @@ impl TokenService {
             "Password grant succeeded, token expires in {}s",
             response.expires_in
         );
-        self.handle_successful_auth(response)?;
+        self.handle_successful_auth(response).await?;
 
         Ok(())
     }
 
     /// Handle successful authentication response
-    fn handle_successful_auth(&mut self, response: KeycloakTokenResponse) -> Result<(), TokenError> {
+    async fn handle_successful_auth(&mut self, response: KeycloakTokenResponse) -> Result<(), TokenError> {
         let expires_at = Utc::now() + Duration::seconds(response.expires_in);
 
         // Store refresh token if we got one
@@ -180,11 +193,15 @@ impl TokenService {
         self.write_token(&response.access_token)?;
         log::info!("Access token written to token file");
 
-        // Ensure OpenCode config and update auth.json - these must succeed
+        // Ensure OpenCode config and update auth.json
         OpenCodeService::ensure_dymium_provider(&self.config)
             .map_err(|e| TokenError::ConfigError(format!("Failed to update OpenCode config: {}", e)))?;
 
-        log::info!("Updated auth.json with fresh OAuth token, expires at {}", expires_at);
+        log::info!("Updated opencode.json with OAuth token, expires at {}", expires_at);
+
+        // Verify the endpoint actually works
+        self.state = TokenState::Verifying;
+        self.verify_endpoint(&response.access_token).await?;
 
         self.state = TokenState::Authenticated {
             token: response.access_token,
@@ -193,6 +210,58 @@ impl TokenService {
         self.last_refresh = Some(Utc::now());
 
         Ok(())
+    }
+
+    /// Verify the LLM endpoint is reachable and accepts our token.
+    /// Calls GET /v1/models (or /models if endpoint already ends with /v1).
+    async fn verify_endpoint(&self, token: &str) -> Result<(), TokenError> {
+        let endpoint = self.config.llm_endpoint.trim_end_matches('/');
+
+        // Build the models URL
+        let models_url = if endpoint.ends_with("/v1") {
+            format!("{}/models", endpoint)
+        } else {
+            format!("{}/v1/models", endpoint)
+        };
+
+        log::info!("Verifying endpoint: GET {}", models_url);
+
+        let response = self
+            .client
+            .get(&models_url)
+            .header("Authorization", format!("Bearer {}", token))
+            .header("Host", extract_hostname(&models_url))
+            .send()
+            .await
+            .map_err(|e| {
+                let msg = if e.is_connect() {
+                    format!("Cannot reach LLM endpoint ({})", endpoint)
+                } else if e.is_timeout() {
+                    format!("LLM endpoint timed out ({})", endpoint)
+                } else {
+                    format!("LLM endpoint error: {}", e)
+                };
+                TokenError::ConfigError(msg)
+            })?;
+
+        let status = response.status();
+        if status.is_success() {
+            log::info!("Endpoint verified: {} returned {}", models_url, status);
+            Ok(())
+        } else if status.as_u16() == 401 {
+            let body = response.text().await.unwrap_or_default();
+            log::warn!("Endpoint rejected token: {} {}", status, body);
+            Err(TokenError::ConfigError(
+                "LLM endpoint rejected the API key (401 Unauthorized)".to_string(),
+            ))
+        } else {
+            let body = response.text().await.unwrap_or_default();
+            log::warn!("Endpoint returned {}: {}", status, body);
+            Err(TokenError::ConfigError(format!(
+                "LLM endpoint returned {} — check endpoint URL",
+                status
+            )))
+        }
     }
 
     /// Perform password grant authentication
@@ -312,11 +381,19 @@ impl TokenService {
 
     /// Manually trigger a refresh
     pub async fn manual_refresh(&mut self) -> Result<(), TokenError> {
-        if self.config.is_static_key_mode() {
-            self.setup_static_api_key()
+        let result = if self.config.is_static_key_mode() {
+            self.setup_static_api_key().await
         } else {
             self.authenticate().await
+        };
+
+        if let Err(ref e) = result {
+            self.state = TokenState::Failed {
+                error: e.to_string(),
+            };
         }
+
+        result
     }
 
     /// Log out - clear all stored credentials and tokens
@@ -447,4 +524,20 @@ impl TokenService {
                     .unwrap_or(false)
         }
     }
+}
+
+/// Extract hostname from a URL string for the Host header.
+/// Returns just the hostname without port (for Istio VirtualService matching).
+fn extract_hostname(url: &str) -> String {
+    // Strip scheme
+    let after_scheme = url
+        .find("://")
+        .map(|i| &url[i + 3..])
+        .unwrap_or(url);
+    // Take up to first / or :
+    let host = after_scheme
+        .split(&['/', ':'][..])
+        .next()
+        .unwrap_or("localhost");
+    host.to_string()
 }

@@ -120,12 +120,13 @@ fn build_tray_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
 /// Update tray menu status text
 fn update_tray_status(app: &AppHandle, state: &TokenState) {
     let status_text = match state {
-        TokenState::Idle => "Status: Not started".to_string(),
+        TokenState::Idle => "Status: Not configured".to_string(),
         TokenState::Authenticating => "Status: Authenticating...".to_string(),
+        TokenState::Verifying => "Status: Verifying endpoint...".to_string(),
         TokenState::Authenticated { expires_at, .. } => {
-            format!("Status: Authenticated (expires {})", expires_at.format("%H:%M"))
+            format!("Status: Connected (expires {})", expires_at.format("%H:%M"))
         }
-        TokenState::Failed { error } => format!("Status: Failed - {}", error),
+        TokenState::Failed { error } => format!("Status: {} ", error),
     };
 
     // Update the menu item text

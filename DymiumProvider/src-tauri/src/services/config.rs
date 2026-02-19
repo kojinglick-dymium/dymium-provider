@@ -27,19 +27,30 @@ pub enum AuthMode {
 }
 
 /// Token state for the UI
+///
+/// State machine:
+///   Idle → Authenticating → Verifying → Authenticated
+///                         ↘ Failed    ↗ Failed
+///
+/// "Authenticated" means the token is valid AND the LLM endpoint responded.
+/// "Failed" includes the specific reason (auth error, connection error, etc.)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum TokenState {
+    /// No credentials configured
     Idle,
+    /// Getting token (OAuth grant or static key setup)
     Authenticating,
+    /// Have token, verifying endpoint connectivity
+    Verifying,
+    /// Token works, endpoint verified
     #[serde(rename_all = "camelCase")]
     Authenticated {
         token: String,
         expires_at: DateTime<Utc>,
     },
-    Failed {
-        error: String,
-    },
+    /// Something is wrong — descriptive error for the user
+    Failed { error: String },
 }
 
 impl Default for TokenState {
@@ -55,6 +66,10 @@ impl TokenState {
 
     pub fn is_authenticating(&self) -> bool {
         matches!(self, Self::Authenticating)
+    }
+
+    pub fn is_verifying(&self) -> bool {
+        matches!(self, Self::Verifying)
     }
 
     pub fn is_failed(&self) -> bool {
