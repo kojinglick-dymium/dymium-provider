@@ -82,24 +82,32 @@ impl OpenCodeService {
         // Resolve the API key to write into options.apiKey
         let api_key = Self::resolve_token(config).ok();
 
+        // Compute the effective baseURL, injecting the app path when configured.
+        // GhostLLM routes: /{app}/v1/chat/completions (preferred, required for OIDC)
+        // vs legacy: /v1/chat/completions (static key only, app inferred from key)
+        //
+        // User enters endpoint like: http://host:9090/v1
+        // With ghostllm_app "myapp": http://host:9090/myapp/v1
+        let effective_base_url = Self::compute_base_url(config);
+
         // Add or update dymium provider
         let providers_map = providers.as_object_mut().unwrap();
         if let Some(existing) = providers_map.get_mut("dymium") {
             let obj = existing.as_object_mut().unwrap();
 
-            // Always update `api` field if endpoint changed
+            // Always update `api` field to the effective URL
             let current_api = obj
                 .get("api")
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_owned();
-            if current_api != config.llm_endpoint {
-                obj.insert("api".to_string(), json!(config.llm_endpoint));
+            if current_api != effective_base_url {
+                obj.insert("api".to_string(), json!(&effective_base_url));
                 changed = true;
                 log::info!(
                     "Updated dymium provider api in opencode.json: {} -> {}",
                     current_api,
-                    config.llm_endpoint
+                    effective_base_url
                 );
             }
 
@@ -113,13 +121,13 @@ impl OpenCodeService {
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_owned();
-            if current_base != config.llm_endpoint {
-                opts.insert("baseURL".to_string(), json!(config.llm_endpoint));
+            if current_base != effective_base_url {
+                opts.insert("baseURL".to_string(), json!(&effective_base_url));
                 changed = true;
                 log::info!(
                     "Updated dymium provider baseURL in opencode.json: {} -> {}",
                     current_base,
-                    config.llm_endpoint
+                    effective_base_url
                 );
             }
 
@@ -138,7 +146,7 @@ impl OpenCodeService {
             }
         } else {
             let mut options = json!({
-                "baseURL": config.llm_endpoint
+                "baseURL": &effective_base_url
             });
             if let Some(ref key) = api_key {
                 options
@@ -152,7 +160,7 @@ impl OpenCodeService {
                 json!({
                     "npm": "@ai-sdk/openai-compatible",
                     "name": "Dymium",
-                    "api": config.llm_endpoint,
+                    "api": &effective_base_url,
                     "options": options,
                     "models": {
                         "claude-opus-4-5": {
@@ -342,6 +350,51 @@ export default async function plugin({ client, project, directory }: any) {
             std::io::ErrorKind::NotFound,
             "No token available (token file missing and no static API key configured)",
         )))
+    }
+
+    /// Compute the effective baseURL for the OpenCode provider.
+    ///
+    /// For OIDC auth, the app name MUST be in the URL path:
+    ///   http://host:9090/myapp/v1  →  /{app}/v1/chat/completions
+    ///
+    /// For static key auth, the legacy path works (server infers app from key):
+    ///   http://host:9090/v1  →  /v1/chat/completions
+    pub fn compute_base_url(config: &AppConfig) -> String {
+        let endpoint = config.llm_endpoint.trim_end_matches('/');
+
+        if config.is_oauth_mode() {
+            if let Some(ref app) = config.ghostllm_app {
+                let app = app.trim();
+                if !app.is_empty() {
+                    // Insert app before /v1 in the endpoint
+                    // e.g. http://host:9090/v1 → http://host:9090/myapp/v1
+                    if let Some(pos) = endpoint.rfind("/v1") {
+                        let mut url = String::with_capacity(endpoint.len() + app.len() + 1);
+                        url.push_str(&endpoint[..pos]);
+                        url.push('/');
+                        url.push_str(app);
+                        url.push_str(&endpoint[pos..]);
+                        log::info!(
+                            "OIDC mode: injected app path into baseURL: {} -> {}",
+                            endpoint,
+                            url
+                        );
+                        return url;
+                    }
+                    // Endpoint doesn't contain /v1 — append /{app}/v1
+                    let url = format!("{}/{}/v1", endpoint, app);
+                    log::info!(
+                        "OIDC mode: appended app path to baseURL: {} -> {}",
+                        endpoint,
+                        url
+                    );
+                    return url;
+                }
+            }
+        }
+
+        // Static key mode or no app configured — use endpoint as-is
+        endpoint.to_string()
     }
 
     /// Write the dymium entry to auth.json

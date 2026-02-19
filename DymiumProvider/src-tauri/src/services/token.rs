@@ -213,15 +213,16 @@ impl TokenService {
     }
 
     /// Verify the LLM endpoint is reachable and accepts our token.
-    /// Calls GET /v1/models (or /models if endpoint already ends with /v1).
+    /// Uses the same effective URL that OpenCode will use (with app path for OIDC).
     async fn verify_endpoint(&self, token: &str) -> Result<(), TokenError> {
-        let endpoint = self.config.llm_endpoint.trim_end_matches('/');
+        let effective_url = OpenCodeService::compute_base_url(&self.config);
+        let effective_trimmed = effective_url.trim_end_matches('/');
 
-        // Build the models URL
-        let models_url = if endpoint.ends_with("/v1") {
-            format!("{}/models", endpoint)
+        // Build the models URL from the effective base
+        let models_url = if effective_trimmed.ends_with("/v1") {
+            format!("{}/models", effective_trimmed)
         } else {
-            format!("{}/v1/models", endpoint)
+            format!("{}/v1/models", effective_trimmed)
         };
 
         log::info!("Verifying endpoint: GET {}", models_url);
@@ -235,9 +236,9 @@ impl TokenService {
             .await
             .map_err(|e| {
                 let msg = if e.is_connect() {
-                    format!("Cannot reach LLM endpoint ({})", endpoint)
+                    format!("Cannot reach LLM endpoint ({})", effective_trimmed)
                 } else if e.is_timeout() {
-                    format!("LLM endpoint timed out ({})", endpoint)
+                    format!("LLM endpoint timed out ({})", effective_trimmed)
                 } else {
                     format!("LLM endpoint error: {}", e)
                 };
