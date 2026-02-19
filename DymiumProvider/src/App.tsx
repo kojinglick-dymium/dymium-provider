@@ -225,7 +225,7 @@ function App() {
               type="text"
               value={llmEndpoint}
               onChange={(e) => setLlmEndpoint(e.target.value)}
-              placeholder="http://spoofcorp.llm.dymium.home:3000/v1"
+              placeholder="http://spoofcorp.llm.dymium.home:9090/v1"
             />
           </div>
         </div>

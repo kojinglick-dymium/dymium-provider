@@ -75,9 +75,27 @@ impl OpenCodeService {
             .entry("provider")
             .or_insert_with(|| json!({}));
 
-        // Add dymium provider if missing
-        if providers.get("dymium").is_none() {
-            providers.as_object_mut().unwrap().insert(
+        // Add or update dymium provider
+        let providers_map = providers.as_object_mut().unwrap();
+        if let Some(existing) = providers_map.get_mut("dymium") {
+            // Always update the endpoint URL fields to match current config
+            let obj = existing.as_object_mut().unwrap();
+            let current_api = obj.get("api").and_then(|v| v.as_str()).unwrap_or("");
+            if current_api != config.llm_endpoint {
+                obj.insert("api".to_string(), json!(config.llm_endpoint));
+                obj.insert(
+                    "options".to_string(),
+                    json!({ "baseURL": config.llm_endpoint }),
+                );
+                changed = true;
+                log::info!(
+                    "Updated dymium provider endpoint in opencode.json: {} -> {}",
+                    current_api,
+                    config.llm_endpoint
+                );
+            }
+        } else {
+            providers_map.insert(
                 "dymium".to_string(),
                 json!({
                     "npm": "@ai-sdk/openai-compatible",

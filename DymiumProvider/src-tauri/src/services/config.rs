@@ -117,7 +117,7 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             auth_mode: AuthMode::OAuth,
-            llm_endpoint: "http://spoofcorp.llm.dymium.home:3000/v1".to_string(),
+            llm_endpoint: "http://spoofcorp.llm.dymium.home:9090/v1".to_string(),
             keycloak_url: "https://192.168.50.100:9173".to_string(),
             client_id: "dymium".to_string(),
             username: "dev_mcp_admin@dymium.io".to_string(),
