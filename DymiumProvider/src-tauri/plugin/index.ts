@@ -95,7 +95,7 @@ function http11Request(
     // because VirtualService typically matches on hostname only
     const hostHeader = url.hostname
     
-    const reqOptions: http.RequestOptions = {
+    const reqOptions: http.RequestOptions | https.RequestOptions = {
       hostname: url.hostname,
       port: url.port || (isHttps ? 443 : 80),
       path: url.pathname + url.search,
@@ -107,6 +107,8 @@ function http11Request(
         // Prevent keep-alive issues with port-forward
         "Connection": "close",
       },
+      // Accept self-signed certificates for development/port-forwarding scenarios
+      rejectUnauthorized: false,
     }
     
     // Add Content-Length for requests with body
@@ -114,7 +116,7 @@ function http11Request(
       reqOptions.headers!["Content-Length"] = Buffer.byteLength(options.body).toString()
     }
     
-    log(`HTTP/1.1 ${options.method} ${url.toString()} Host: ${hostHeader}`)
+    log(`HTTP/1.1 ${options.method} ${url.toString()} Host: ${hostHeader} (TLS: ${isHttps})`)
     
     const req = lib.request(reqOptions, (res) => {
       const chunks: Buffer[] = []
