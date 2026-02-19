@@ -80,7 +80,11 @@ impl OpenCodeService {
         if let Some(existing) = providers_map.get_mut("dymium") {
             // Always update the endpoint URL fields to match current config
             let obj = existing.as_object_mut().unwrap();
-            let current_api = obj.get("api").and_then(|v| v.as_str()).unwrap_or("");
+            let current_api = obj
+                .get("api")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_owned();
             if current_api != config.llm_endpoint {
                 obj.insert("api".to_string(), json!(config.llm_endpoint));
                 obj.insert(
