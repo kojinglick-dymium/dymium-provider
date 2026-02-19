@@ -24,23 +24,27 @@ pub struct OpenCodeService;
 
 impl OpenCodeService {
     /// Get the OpenCode config path
+    /// OpenCode (Node.js) uses ~/.config/opencode/ on all platforms (XDG convention),
+    /// NOT the platform-native config dir (~/Library/Application Support on macOS).
     fn config_path() -> Result<PathBuf, OpenCodeError> {
-        dirs::config_dir()
-            .map(|p| p.join("opencode").join("opencode.json"))
+        dirs::home_dir()
+            .map(|p| p.join(".config/opencode/opencode.json"))
             .ok_or(OpenCodeError::NoHomeDir)
     }
 
     /// Get the OpenCode auth path
+    /// OpenCode (Node.js) uses ~/.local/share/opencode/ on all platforms (XDG convention),
+    /// NOT the platform-native data dir (~/Library/Application Support on macOS).
     fn auth_path() -> Result<PathBuf, OpenCodeError> {
-        dirs::data_local_dir()
-            .map(|p| p.join("opencode").join("auth.json"))
+        dirs::home_dir()
+            .map(|p| p.join(".local/share/opencode/auth.json"))
             .ok_or(OpenCodeError::NoHomeDir)
     }
 
     /// Get the plugin directory path
     fn plugin_dir() -> Result<PathBuf, OpenCodeError> {
-        dirs::data_local_dir()
-            .map(|p| p.join("dymium-opencode-plugin"))
+        dirs::home_dir()
+            .map(|p| p.join(".local/share/dymium-opencode-plugin"))
             .ok_or(OpenCodeError::NoHomeDir)
     }
 
