@@ -354,45 +354,84 @@ export default async function plugin({ client, project, directory }: any) {
             json!({})
         };
 
-        // Read the current token
+        // Read the current token - fail if not available
         let token_path = AppConfig::token_path().map_err(|_| OpenCodeError::NoHomeDir)?;
-        let token = fs::read_to_string(&token_path).ok();
+        let token = fs::read_to_string(&token_path).map_err(|e| {
+            log::error!("Failed to read token file: {}", e);
+            OpenCodeError::IoError(e)
+        })?;
 
-        if let Some(token) = token {
-            let token = token.trim().to_string();
-            let mut dymium_auth = json!({
-                "type": "api",
-                "key": token
-            });
-
-            // Add ghostllm_app if configured
-            if let Some(ref app) = config.ghostllm_app {
-                if !app.is_empty() {
-                    dymium_auth
-                        .as_object_mut()
-                        .unwrap()
-                        .insert("app".to_string(), json!(app));
-                    log::debug!("Including GhostLLM app in auth.json: {}", app);
-                }
-            }
-
-            auth.as_object_mut()
-                .unwrap()
-                .insert("dymium".to_string(), dymium_auth);
-
-            fs::write(&auth_path, serde_json::to_string_pretty(&auth)?)?;
-            log::info!("Updated dymium token in {}", auth_path.display());
-        } else {
-            log::warn!("No token available to write to auth.json");
+        let token = token.trim().to_string();
+        if token.is_empty() {
+            return Err(OpenCodeError::IoError(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Token file is empty",
+            )));
         }
+
+        // Determine auth type based on config mode
+        let auth_type = if config.is_static_key_mode() {
+            "static"
+        } else {
+            "oauth"
+        };
+
+        let mut dymium_auth = json!({
+            "type": auth_type,
+            "key": token
+        });
+
+        // Add ghostllm_app if configured
+        if let Some(ref app) = config.ghostllm_app {
+            if !app.is_empty() {
+                dymium_auth
+                    .as_object_mut()
+                    .unwrap()
+                    .insert("app".to_string(), json!(app));
+                log::debug!("Including GhostLLM app in auth.json: {}", app);
+            }
+        }
+
+        auth.as_object_mut()
+            .unwrap()
+            .insert("dymium".to_string(), dymium_auth);
+
+        fs::write(&auth_path, serde_json::to_string_pretty(&auth)?)?;
+        log::info!(
+            "Updated dymium token in {} (mode: {})",
+            auth_path.display(),
+            auth_type
+        );
 
         Ok(())
     }
 
-    /// Force update the auth token (called on every refresh)
-    pub fn update_token(config: &AppConfig) {
-        if let Err(e) = Self::update_auth_json(config) {
-            log::error!("Failed to update auth.json: {}", e);
+    /// Clear the dymium entry from auth.json
+    /// Called when switching auth modes to prevent stale credentials
+    pub fn clear_dymium_auth() {
+        if let Err(e) = Self::do_clear_dymium_auth() {
+            log::error!("Failed to clear dymium auth: {}", e);
         }
+    }
+
+    fn do_clear_dymium_auth() -> Result<(), OpenCodeError> {
+        let auth_path = Self::auth_path()?;
+
+        if !auth_path.exists() {
+            return Ok(());
+        }
+
+        let content = fs::read_to_string(&auth_path)?;
+        let mut auth: Value = serde_json::from_str(&content).unwrap_or_else(|_| json!({}));
+
+        // Remove the dymium entry
+        if let Some(obj) = auth.as_object_mut() {
+            if obj.remove("dymium").is_some() {
+                fs::write(&auth_path, serde_json::to_string_pretty(&auth)?)?;
+                log::info!("Cleared dymium entry from auth.json");
+            }
+        }
+
+        Ok(())
     }
 }

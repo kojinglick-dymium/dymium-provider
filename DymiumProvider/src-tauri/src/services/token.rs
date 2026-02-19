@@ -108,13 +108,10 @@ impl TokenService {
         self.write_token(api_key)?;
         log::info!("Static API key written to token file");
 
-        // Ensure OpenCode config
-        if let Err(e) = OpenCodeService::ensure_dymium_provider(&self.config) {
-            log::error!("Failed to ensure OpenCode config: {}", e);
-        }
+        // Ensure OpenCode config and update auth.json - these must succeed
+        OpenCodeService::ensure_dymium_provider(&self.config)
+            .map_err(|e| TokenError::ConfigError(format!("Failed to update OpenCode config: {}", e)))?;
 
-        // Update auth.json
-        OpenCodeService::update_token(&self.config);
         log::info!("Updated auth.json with static API key");
 
         // Static keys don't expire, so use a far-future date
@@ -183,14 +180,11 @@ impl TokenService {
         self.write_token(&response.access_token)?;
         log::info!("Access token written to token file");
 
-        // Ensure OpenCode config
-        if let Err(e) = OpenCodeService::ensure_dymium_provider(&self.config) {
-            log::error!("Failed to ensure OpenCode config: {}", e);
-        }
+        // Ensure OpenCode config and update auth.json - these must succeed
+        OpenCodeService::ensure_dymium_provider(&self.config)
+            .map_err(|e| TokenError::ConfigError(format!("Failed to update OpenCode config: {}", e)))?;
 
-        // Update auth.json
-        OpenCodeService::update_token(&self.config);
-        log::info!("Updated auth.json with fresh token, expires at {}", expires_at);
+        log::info!("Updated auth.json with fresh OAuth token, expires at {}", expires_at);
 
         self.state = TokenState::Authenticated {
             token: response.access_token,
@@ -370,6 +364,9 @@ impl TokenService {
         client_secret: String,
         password: String,
     ) -> Result<(), TokenError> {
+        // Clear old credentials immediately when switching modes
+        self.clear_cached_credentials();
+        
         self.config.auth_mode = AuthMode::OAuth;
         self.config.keycloak_url = keycloak_url;
         self.config.realm = realm;
@@ -394,6 +391,9 @@ impl TokenService {
         static_api_key: String,
         ghostllm_app: Option<String>,
     ) -> Result<(), TokenError> {
+        // Clear old credentials immediately when switching modes
+        self.clear_cached_credentials();
+        
         self.config.auth_mode = AuthMode::StaticKey;
         self.config.llm_endpoint = llm_endpoint;
         self.config.static_api_key = Some(static_api_key);
@@ -405,6 +405,24 @@ impl TokenService {
         self.config.save().map_err(|e| TokenError::ConfigError(e.to_string()))?;
         log::info!("Static API key configuration saved");
         Ok(())
+    }
+
+    /// Clear cached credentials (token file and auth.json)
+    /// Called when switching auth modes to prevent stale credentials from being used
+    fn clear_cached_credentials(&self) {
+        // Delete token file
+        if let Ok(path) = AppConfig::token_path() {
+            if let Err(e) = fs::remove_file(&path) {
+                if e.kind() != std::io::ErrorKind::NotFound {
+                    log::warn!("Failed to remove token file: {}", e);
+                }
+            } else {
+                log::info!("Cleared token file");
+            }
+        }
+
+        // Clear dymium entry from auth.json
+        OpenCodeService::clear_dymium_auth();
     }
 
     /// Check if credentials are configured
