@@ -217,25 +217,59 @@ pub fn run() {
             let app_handle = app.handle().clone();
             let ts = app.state::<AppState>().token_service.clone();
             tauri::async_runtime::spawn(async move {
-                let mut service = ts.lock().await;
+                // --- Initial authentication ---
+                {
+                    let mut service = ts.lock().await;
 
-                // Always sync opencode.json and auth.json on startup
-                // This ensures config files are up to date after upgrades
-                // without requiring the user to re-save
-                let config = service.config().clone();
-                if let Err(e) = OpenCodeService::ensure_dymium_provider(&config) {
-                    log::warn!("Failed to sync OpenCode config on startup: {}", e);
-                }
-
-                if service.has_credentials() {
-                    log::info!("Starting token refresh loop...");
-                    if let Err(e) = service.start_refresh_loop().await {
-                        log::error!("Failed to start refresh loop: {}", e);
+                    // Always sync opencode.json and auth.json on startup
+                    let config = service.config().clone();
+                    if let Err(e) = OpenCodeService::ensure_dymium_provider(&config) {
+                        log::warn!("Failed to sync OpenCode config on startup: {}", e);
                     }
-                    // Update tray status
-                    update_tray_status(&app_handle, service.state());
-                    // Emit initial state
-                    let _ = app_handle.emit("token-state-changed", service.state());
+
+                    if service.has_credentials() {
+                        log::info!("Starting initial authentication...");
+                        if let Err(e) = service.start_refresh_loop().await {
+                            log::error!("Failed initial authentication: {}", e);
+                        }
+                        update_tray_status(&app_handle, service.state());
+                        let _ = app_handle.emit("token-state-changed", service.state());
+                    }
+                }
+                // Lock released here — periodic loop can proceed independently
+
+                // --- Periodic OAuth token refresh ---
+                // Only runs for OAuth mode; static keys don't expire.
+                loop {
+                    let interval_secs = {
+                        let service = ts.lock().await;
+                        if !service.needs_refresh_loop() {
+                            // Not OAuth or not authenticated — park until
+                            // something changes (manual refresh / re-save)
+                            drop(service);
+                            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                            continue;
+                        }
+                        service.refresh_interval_secs()
+                    };
+
+                    tokio::time::sleep(std::time::Duration::from_secs(interval_secs)).await;
+
+                    let mut service = ts.lock().await;
+                    if !service.needs_refresh_loop() {
+                        continue;
+                    }
+                    match service.refresh_tick().await {
+                        Ok(()) => {
+                            update_tray_status(&app_handle, service.state());
+                            let _ = app_handle.emit("token-state-changed", service.state());
+                        }
+                        Err(e) => {
+                            log::error!("Periodic token refresh failed: {}", e);
+                            // Don't set Failed state — the existing token might
+                            // still be valid until it actually expires. Just log.
+                        }
+                    }
                 }
             });
 

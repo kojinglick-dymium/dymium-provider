@@ -17,6 +17,21 @@ Cross-platform authentication manager for [GhostLLM](https://dymium.io) that int
 - **OpenCode Integration** - Automatically configures OpenCode with the `dymium` provider
 - **Cross-Platform** - Works on macOS, Linux, and Windows
 
+## System Requirements
+
+| Dependency | Minimum Version | Notes |
+|------------|----------------|-------|
+| [OpenCode](https://opencode.ai) | **v1.2.0+** | Older versions have a bug where `@ai-sdk/openai-compatible` strips the path component from `baseURL`, breaking OIDC app-path routing. |
+| [dymium-auth-plugin](https://www.npmjs.com/package/dymium-auth-plugin) | 1.2.0 | Listed in `opencode.json` plugins; installed automatically by OpenCode. |
+| GhostLLM endpoint | Reachable via HTTP | Typically tunneled through `ssh -L 9090:localhost:9090` to a `kubectl port-forward`. |
+
+### Verifying OpenCode version
+
+```bash
+opencode -v   # must be >= 1.2.0
+opencode update   # upgrade if needed
+```
+
 ## Quick Start
 
 See the full documentation in [`DymiumProvider/README.md`](./DymiumProvider/README.md).

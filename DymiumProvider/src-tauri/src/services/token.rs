@@ -380,6 +380,57 @@ impl TokenService {
         Ok(())
     }
 
+    /// Perform a single OAuth refresh tick (called by the periodic loop).
+    /// Silently re-authenticates using the refresh token (or password grant as
+    /// fallback) and writes the new access token to opencode.json / auth.json.
+    /// Skips verification to keep the tick lightweight — the initial startup
+    /// already verified the endpoint.
+    pub async fn refresh_tick(&mut self) -> Result<(), TokenError> {
+        // Only OAuth tokens need periodic refresh
+        if self.config.is_static_key_mode() {
+            return Ok(());
+        }
+
+        log::info!("Periodic token refresh tick");
+
+        // Try refresh token first, fall back to password grant
+        let response = if let Some(refresh_token) = &self.config.refresh_token.clone() {
+            match self.perform_refresh_token_grant(refresh_token.clone()).await {
+                Ok(resp) => resp,
+                Err(e) => {
+                    log::warn!("Refresh token grant failed in tick: {}, trying password grant", e);
+                    self.perform_password_grant().await?
+                }
+            }
+        } else {
+            self.perform_password_grant().await?
+        };
+
+        let expires_at = Utc::now() + Duration::seconds(response.expires_in);
+
+        // Store refresh token if we got a new one
+        if let Some(ref refresh_token) = response.refresh_token {
+            self.config.refresh_token = Some(refresh_token.clone());
+            if let Err(e) = self.config.save() {
+                log::error!("Failed to save refresh token: {}", e);
+            }
+        }
+
+        // Write new access token to disk files
+        self.write_token(&response.access_token)?;
+        OpenCodeService::ensure_dymium_provider(&self.config)
+            .map_err(|e| TokenError::ConfigError(format!("Failed to update OpenCode config: {}", e)))?;
+
+        self.state = TokenState::Authenticated {
+            token: response.access_token,
+            expires_at,
+        };
+        self.last_refresh = Some(Utc::now());
+
+        log::info!("Token refreshed, expires at {}", expires_at);
+        Ok(())
+    }
+
     /// Manually trigger a refresh
     pub async fn manual_refresh(&mut self) -> Result<(), TokenError> {
         let result = if self.config.is_static_key_mode() {
@@ -501,6 +552,16 @@ impl TokenService {
 
         // Clear dymium entry from auth.json
         OpenCodeService::clear_dymium_auth();
+    }
+
+    /// Whether the periodic refresh loop should run (OAuth mode with credentials)
+    pub fn needs_refresh_loop(&self) -> bool {
+        !self.config.is_static_key_mode() && self.has_credentials() && self.state.is_authenticated()
+    }
+
+    /// Refresh interval from config
+    pub fn refresh_interval_secs(&self) -> u64 {
+        self.config.refresh_interval_seconds
     }
 
     /// Check if credentials are configured
