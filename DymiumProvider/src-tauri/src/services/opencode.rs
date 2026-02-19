@@ -79,11 +79,15 @@ impl OpenCodeService {
             .entry("provider")
             .or_insert_with(|| json!({}));
 
+        // Resolve the API key to write into options.apiKey
+        let api_key = Self::resolve_token(config).ok();
+
         // Add or update dymium provider
         let providers_map = providers.as_object_mut().unwrap();
         if let Some(existing) = providers_map.get_mut("dymium") {
-            // Always update the endpoint URL fields to match current config
             let obj = existing.as_object_mut().unwrap();
+
+            // Always update `api` field if endpoint changed
             let current_api = obj
                 .get("api")
                 .and_then(|v| v.as_str())
@@ -91,27 +95,65 @@ impl OpenCodeService {
                 .to_owned();
             if current_api != config.llm_endpoint {
                 obj.insert("api".to_string(), json!(config.llm_endpoint));
-                obj.insert(
-                    "options".to_string(),
-                    json!({ "baseURL": config.llm_endpoint }),
-                );
                 changed = true;
                 log::info!(
-                    "Updated dymium provider endpoint in opencode.json: {} -> {}",
+                    "Updated dymium provider api in opencode.json: {} -> {}",
                     current_api,
                     config.llm_endpoint
                 );
             }
+
+            // Merge into existing options (preserve user-set headers, etc.)
+            let options = obj.entry("options").or_insert_with(|| json!({}));
+            let opts = options.as_object_mut().unwrap();
+
+            // Update baseURL if changed
+            let current_base = opts
+                .get("baseURL")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_owned();
+            if current_base != config.llm_endpoint {
+                opts.insert("baseURL".to_string(), json!(config.llm_endpoint));
+                changed = true;
+                log::info!(
+                    "Updated dymium provider baseURL in opencode.json: {} -> {}",
+                    current_base,
+                    config.llm_endpoint
+                );
+            }
+
+            // Update apiKey if changed (this is how OpenCode actually reads auth)
+            if let Some(ref key) = api_key {
+                let current_key = opts
+                    .get("apiKey")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_owned();
+                if current_key != *key {
+                    opts.insert("apiKey".to_string(), json!(key));
+                    changed = true;
+                    log::info!("Updated dymium provider apiKey in opencode.json");
+                }
+            }
         } else {
+            let mut options = json!({
+                "baseURL": config.llm_endpoint
+            });
+            if let Some(ref key) = api_key {
+                options
+                    .as_object_mut()
+                    .unwrap()
+                    .insert("apiKey".to_string(), json!(key));
+            }
+
             providers_map.insert(
                 "dymium".to_string(),
                 json!({
                     "npm": "@ai-sdk/openai-compatible",
                     "name": "Dymium",
                     "api": config.llm_endpoint,
-                    "options": {
-                        "baseURL": config.llm_endpoint
-                    },
+                    "options": options,
                     "models": {
                         "claude-opus-4-5": {
                             "name": "Claude Opus 4.5 (via Dymium)",
@@ -211,183 +253,53 @@ impl OpenCodeService {
         )?;
 
         // Write the plugin TypeScript code (embedded at compile time)
-        // The path is relative to the source file location
+        // This is a lightweight version — auth is handled via options.apiKey in opencode.json.
+        // The plugin provides event logging for debugging the GhostLLM integration.
         const PLUGIN_SOURCE: &str = r#"import fs from "fs"
 import path from "path"
 import os from "os"
-import http from "http"
-import https from "https"
 
-// Path to the auth.json file
-const AUTH_JSON_PATH = path.join(os.homedir(), ".local/share/opencode/auth.json")
+const LOG_DIR = path.join(os.homedir(), ".local/share/dymium-opencode-plugin")
+const LOG_FILE = path.join(LOG_DIR, "debug.log")
 
-// Log file for debugging (no console.log to avoid polluting OpenCode UI)
-const LOG_FILE = path.join(os.homedir(), ".local/share/dymium-opencode-plugin/debug.log")
+try { if (!fs.existsSync(LOG_DIR)) fs.mkdirSync(LOG_DIR, { recursive: true }) } catch {}
 
 function log(message: string) {
-  const timestamp = new Date().toISOString()
-  const line = `${timestamp} ${message}\n`
-  try {
-    fs.appendFileSync(LOG_FILE, line)
-  } catch {}
+  try { fs.appendFileSync(LOG_FILE, `${new Date().toISOString()} ${message}\n`) } catch {}
 }
 
-interface DymiumAuth {
-  key: string
-  app?: string
-  endpoint?: string
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${ms}ms`
+  const s = Math.floor(ms / 1000)
+  if (s < 60) return `${s}s`
+  return `${Math.floor(s / 60)}m ${s % 60}s`
 }
 
-function getDymiumAuth(): DymiumAuth | null {
-  try {
-    if (!fs.existsSync(AUTH_JSON_PATH)) {
-      log(`auth.json not found at ${AUTH_JSON_PATH}`)
-      return null
-    }
-    const content = fs.readFileSync(AUTH_JSON_PATH, "utf-8")
-    const auth = JSON.parse(content)
-    if (auth.dymium?.key) {
-      return {
-        key: auth.dymium.key,
-        app: auth.dymium.app || undefined,
-        endpoint: auth.dymium.endpoint || undefined
-      }
-    }
-    log("No dymium.key found in auth.json")
-    return null
-  } catch (error) {
-    log(`Failed to read auth.json: ${error}`)
-    return null
-  }
-}
-
-/**
- * Inject the app name into the URL path
- * Transforms: /v1/models -> /{app}/v1/models
- */
-function injectAppIntoPath(pathname: string, app: string): string {
-  // If path already starts with the app, don't double-inject
-  if (pathname.startsWith(`/${app}/`)) {
-    return pathname
-  }
-  // Insert app before /v1/ if present
-  if (pathname.startsWith("/v1/") || pathname === "/v1") {
-    return `/${app}${pathname}`
-  }
-  // For other paths, prepend the app
-  return `/${app}${pathname}`
-}
-
-function http11Request(
-  url: URL,
-  options: { method: string; headers: Record<string, string>; body?: string }
-): Promise<Response> {
-  return new Promise((resolve, reject) => {
-    const isHttps = url.protocol === "https:"
-    const lib = isHttps ? https : http
-    const hostHeader = url.hostname
-    const reqOptions: http.RequestOptions | https.RequestOptions = {
-      hostname: url.hostname,
-      port: url.port || (isHttps ? 443 : 80),
-      path: url.pathname + url.search,
-      method: options.method,
-      headers: { ...options.headers, "Host": hostHeader, "Connection": "close" },
-      // Accept self-signed certificates for development/port-forwarding scenarios
-      rejectUnauthorized: false,
-    }
-    if (options.body) {
-      reqOptions.headers!["Content-Length"] = Buffer.byteLength(options.body).toString()
-    }
-    log(`HTTP/1.1 ${options.method} ${url.toString()} Host: ${hostHeader} (TLS: ${isHttps})`)
-    const req = lib.request(reqOptions, (res) => {
-      const chunks: Buffer[] = []
-      res.on("data", (chunk) => chunks.push(chunk))
-      res.on("end", () => {
-        const body = Buffer.concat(chunks)
-        const responseHeaders = new Headers()
-        for (const [key, value] of Object.entries(res.headers)) {
-          if (value) {
-            if (Array.isArray(value)) {
-              value.forEach(v => responseHeaders.append(key, v))
-            } else {
-              responseHeaders.set(key, value)
-            }
-          }
-        }
-        log(`Response: ${res.statusCode} ${res.statusMessage}`)
-        resolve(new Response(body, {
-          status: res.statusCode || 200,
-          statusText: res.statusMessage || "",
-          headers: responseHeaders,
-        }))
-      })
-    })
-    req.on("error", (err) => { log(`Request error: ${err.message}`); reject(err) })
-    req.setTimeout(120000, () => { log("Request timeout"); req.destroy(new Error("Request timeout")) })
-    if (options.body) req.write(options.body)
-    req.end()
-  })
-}
-
-async function dymiumFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
-  const auth = getDymiumAuth()
-  if (!auth) {
-    throw new Error("[dymium-auth] No valid Dymium token available. Please ensure the Dymium Provider app is running.")
-  }
-  const url = typeof input === "string" ? new URL(input) : input instanceof URL ? input : new URL(input.url)
-  
-  // Rewrite URL origin to match the endpoint from auth.json (source of truth)
-  // This ensures the correct host/port is used even if opencode.json is stale
-  if (auth.endpoint) {
-    try {
-      const endpointUrl = new URL(auth.endpoint)
-      const oldOrigin = url.origin
-      url.protocol = endpointUrl.protocol
-      url.hostname = endpointUrl.hostname
-      url.port = endpointUrl.port
-      if (oldOrigin !== url.origin) {
-        log(`Rewrote URL origin: ${oldOrigin} -> ${url.origin}`)
-      }
-    } catch (e) {
-      log(`Failed to parse endpoint URL from auth.json: ${auth.endpoint}`)
-    }
-  }
-  
-  // Inject app name into URL path if configured
-  if (auth.app) {
-    const newPath = injectAppIntoPath(url.pathname, auth.app)
-    if (newPath !== url.pathname) {
-      log(`Rewriting path: ${url.pathname} -> ${newPath}`)
-      url.pathname = newPath
-    }
-  }
-  
-  const headers: Record<string, string> = { "Content-Type": "application/json", "Accept": "application/json, text/event-stream" }
-  if (init?.headers) {
-    const initHeaders = new Headers(init.headers)
-    initHeaders.forEach((value, key) => { headers[key] = value })
-  }
-  headers["Authorization"] = `Bearer ${auth.key}`
-  let body: string | undefined
-  if (init?.body) {
-    if (typeof init.body === "string") body = init.body
-    else if (init.body instanceof ArrayBuffer) body = new TextDecoder().decode(init.body)
-    else if (ArrayBuffer.isView(init.body)) body = new TextDecoder().decode(init.body)
-    else body = String(init.body)
-  }
-  return http11Request(url, { method: init?.method || "GET", headers, body })
-}
+let startTime: number | null = null
 
 export default async function plugin({ client, project, directory }: any) {
   log(`Plugin initialized for project: ${project?.name || directory}`)
   return {
-    auth: {
-      provider: "dymium",
-      methods: [],
-      async loader(getAuth: () => Promise<any>, provider: any) {
-        log(`Loader called for provider: ${provider?.id || provider}`)
-        return { apiKey: "", fetch: dymiumFetch }
-      },
+    event: async ({ event }: { event: { type: string; properties?: Record<string, any> } }) => {
+      const { type, properties: props = {} } = event
+      switch (type) {
+        case "session.created":
+          startTime = Date.now()
+          log("Session created")
+          break
+        case "session.idle":
+          if (startTime) { log(`Session completed in ${formatDuration(Date.now() - startTime)}`); startTime = null }
+          break
+        case "session.error":
+          log(`Session error: ${JSON.stringify(props)}`)
+          if (startTime) { log(`Session failed after ${formatDuration(Date.now() - startTime)}`); startTime = null }
+          break
+        case "session.status":
+          log(`Session status: ${props.status || "unknown"}`)
+          break
+        default:
+          if (type.startsWith("session.") || type.startsWith("message.")) log(`Event: ${type}`)
+      }
     },
   }
 }
