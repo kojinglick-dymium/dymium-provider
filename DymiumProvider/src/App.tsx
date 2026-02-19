@@ -177,7 +177,7 @@ function App() {
 
   const isFormValid = authMode === "OAuth"
     ? llmEndpoint && keycloakUrl && username && clientSecret && password && realm && clientId && ghostllmApp
-    : llmEndpoint && staticApiKey && ghostllmApp;
+    : llmEndpoint && staticApiKey;  // ghostllmApp is optional for static key (legacy lookup)
 
   const hasCredentials = config && (
     authMode === "OAuth"
