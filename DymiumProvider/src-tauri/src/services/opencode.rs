@@ -217,6 +217,7 @@ function log(message: string) {
 interface DymiumAuth {
   key: string
   app?: string
+  endpoint?: string
 }
 
 function getDymiumAuth(): DymiumAuth | null {
@@ -230,7 +231,8 @@ function getDymiumAuth(): DymiumAuth | null {
     if (auth.dymium?.key) {
       return {
         key: auth.dymium.key,
-        app: auth.dymium.app || undefined
+        app: auth.dymium.app || undefined,
+        endpoint: auth.dymium.endpoint || undefined
       }
     }
     log("No dymium.key found in auth.json")
@@ -315,6 +317,23 @@ async function dymiumFetch(input: RequestInfo | URL, init?: RequestInit): Promis
     throw new Error("[dymium-auth] No valid Dymium token available. Please ensure the Dymium Provider app is running.")
   }
   const url = typeof input === "string" ? new URL(input) : input instanceof URL ? input : new URL(input.url)
+  
+  // Rewrite URL origin to match the endpoint from auth.json (source of truth)
+  // This ensures the correct host/port is used even if opencode.json is stale
+  if (auth.endpoint) {
+    try {
+      const endpointUrl = new URL(auth.endpoint)
+      const oldOrigin = url.origin
+      url.protocol = endpointUrl.protocol
+      url.hostname = endpointUrl.hostname
+      url.port = endpointUrl.port
+      if (oldOrigin !== url.origin) {
+        log(`Rewrote URL origin: ${oldOrigin} -> ${url.origin}`)
+      }
+    } catch (e) {
+      log(`Failed to parse endpoint URL from auth.json: ${auth.endpoint}`)
+    }
+  }
   
   // Inject app name into URL path if configured
   if (auth.app) {
@@ -402,7 +421,8 @@ export default async function plugin({ client, project, directory }: any) {
 
         let mut dymium_auth = json!({
             "type": auth_type,
-            "key": token
+            "key": token,
+            "endpoint": config.llm_endpoint
         });
 
         // Add ghostllm_app if configured
