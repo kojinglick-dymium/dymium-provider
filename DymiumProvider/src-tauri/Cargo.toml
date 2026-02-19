@@ -1,6 +1,6 @@
 [package]
 name = "dymium-provider"
-version = "0.1.12"
+version = "0.1.13"
 description = "Dymium Provider - Cross-platform GhostLLM authentication manager"
 authors = ["Dymium"]
 edition = "2021"
