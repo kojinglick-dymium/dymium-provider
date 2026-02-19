@@ -169,6 +169,7 @@ impl OpenCodeService {
                             "temperature": true,
                             "attachment": true,
                             "reasoning": true,
+                            "interleaved": { "field": "reasoning_content" },
                             "limit": {
                                 "context": 200000,
                                 "output": 16384
