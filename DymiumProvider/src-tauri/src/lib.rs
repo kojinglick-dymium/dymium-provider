@@ -38,6 +38,7 @@ async fn get_config(state: State<'_, AppState>) -> Result<AppConfig, String> {
 /// Save OAuth configuration
 #[tauri::command]
 async fn save_oauth_config(
+    app: AppHandle,
     state: State<'_, AppState>,
     keycloak_url: String,
     realm: String,
@@ -49,7 +50,7 @@ async fn save_oauth_config(
     password: String,
 ) -> Result<(), String> {
     let mut service = state.token_service.lock().await;
-    service
+    let result = service
         .save_oauth_setup(
             keycloak_url,
             realm,
@@ -59,36 +60,46 @@ async fn save_oauth_config(
             ghostllm_app,
             client_secret,
             password,
-        )
-        .map_err(|e| e.to_string())
+        );
+    update_tray_status(&app, service.state());
+    let _ = app.emit("token-state-changed", service.state());
+    result.map_err(|e| e.to_string())
 }
 
 /// Save static API key configuration
 #[tauri::command]
 async fn save_static_key_config(
+    app: AppHandle,
     state: State<'_, AppState>,
     llm_endpoint: String,
     static_api_key: String,
     ghostllm_app: Option<String>,
 ) -> Result<(), String> {
     let mut service = state.token_service.lock().await;
-    service
-        .save_static_key_setup(llm_endpoint, static_api_key, ghostllm_app)
-        .map_err(|e| e.to_string())
+    let result = service.save_static_key_setup(llm_endpoint, static_api_key, ghostllm_app);
+    update_tray_status(&app, service.state());
+    let _ = app.emit("token-state-changed", service.state());
+    result.map_err(|e| e.to_string())
 }
 
 /// Manually trigger a token refresh
 #[tauri::command]
-async fn manual_refresh(state: State<'_, AppState>) -> Result<(), String> {
+async fn manual_refresh(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     let mut service = state.token_service.lock().await;
-    service.manual_refresh().await.map_err(|e| e.to_string())
+    let result = service.manual_refresh().await;
+    update_tray_status(&app, service.state());
+    let _ = app.emit("token-state-changed", service.state());
+    result.map_err(|e| e.to_string())
 }
 
 /// Log out and clear all credentials
 #[tauri::command]
-async fn log_out(state: State<'_, AppState>) -> Result<(), String> {
+async fn log_out(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     let mut service = state.token_service.lock().await;
-    service.log_out().map_err(|e| e.to_string())
+    let result = service.log_out();
+    update_tray_status(&app, service.state());
+    let _ = app.emit("token-state-changed", service.state());
+    result.map_err(|e| e.to_string())
 }
 
 /// Check if credentials are configured
@@ -100,9 +111,12 @@ async fn has_credentials(state: State<'_, AppState>) -> Result<bool, String> {
 
 /// Start the token refresh loop
 #[tauri::command]
-async fn start_refresh_loop(state: State<'_, AppState>) -> Result<(), String> {
+async fn start_refresh_loop(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     let mut service = state.token_service.lock().await;
-    service.start_refresh_loop().await.map_err(|e| e.to_string())
+    let result = service.start_refresh_loop().await;
+    update_tray_status(&app, service.state());
+    let _ = app.emit("token-state-changed", service.state());
+    result.map_err(|e| e.to_string())
 }
 
 /// Build the tray menu
@@ -121,12 +135,29 @@ fn build_tray_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
 fn update_tray_status(app: &AppHandle, state: &TokenState) {
     let status_text = match state {
         TokenState::Idle => "Status: Not configured".to_string(),
-        TokenState::Authenticating => "Status: Authenticating...".to_string(),
+        TokenState::Authenticating => "Status: Connecting...".to_string(),
         TokenState::Verifying => "Status: Verifying endpoint...".to_string(),
         TokenState::Authenticated { expires_at, .. } => {
             format!("Status: Connected (expires {})", expires_at.format("%H:%M"))
         }
-        TokenState::Failed { error } => format!("Status: {} ", error),
+        TokenState::Failed { error } => {
+            let normalized = error.to_lowercase();
+            if normalized.contains("401")
+                || normalized.contains("unauthorized")
+                || normalized.contains("invalid api key")
+                || normalized.contains("invalid oidc token")
+            {
+                "Status: Unauthorized".to_string()
+            } else if normalized.contains("timed out") {
+                "Status: Endpoint timeout".to_string()
+            } else if normalized.contains("cannot reach llm endpoint") {
+                "Status: Endpoint unreachable".to_string()
+            } else if normalized.contains("failed to update opencode config") {
+                "Status: OpenCode config error".to_string()
+            } else {
+                "Status: Error".to_string()
+            }
+        }
     };
 
     // Update the menu item text
@@ -213,6 +244,16 @@ pub fn run() {
                 })
                 .build(app)?;
 
+            // Initialize tray status immediately from current in-memory state.
+            {
+                let ts = app.state::<AppState>().token_service.clone();
+                let app_handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    let service = ts.lock().await;
+                    update_tray_status(&app_handle, service.state());
+                });
+            }
+
             // Sync managed files and start token refresh loop in background
             let app_handle = app.handle().clone();
             let ts = app.state::<AppState>().token_service.clone();
@@ -232,9 +273,9 @@ pub fn run() {
                         if let Err(e) = service.start_refresh_loop().await {
                             log::error!("Failed initial authentication: {}", e);
                         }
-                        update_tray_status(&app_handle, service.state());
-                        let _ = app_handle.emit("token-state-changed", service.state());
                     }
+                    update_tray_status(&app_handle, service.state());
+                    let _ = app_handle.emit("token-state-changed", service.state());
                 }
                 // Lock released here — periodic loop can proceed independently
 

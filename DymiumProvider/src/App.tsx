@@ -28,6 +28,22 @@ interface AppConfig {
   staticApiKey?: string;
 }
 
+function statusLabelFromError(error?: string): string {
+  const normalized = (error || "").toLowerCase();
+  if (
+    normalized.includes("401") ||
+    normalized.includes("unauthorized") ||
+    normalized.includes("invalid api key") ||
+    normalized.includes("invalid oidc token")
+  ) {
+    return "Unauthorized";
+  }
+  if (normalized.includes("timed out")) return "Endpoint timeout";
+  if (normalized.includes("cannot reach llm endpoint")) return "Endpoint unreachable";
+  if (normalized.includes("failed to update opencode config")) return "OpenCode config error";
+  return "Failed";
+}
+
 // Ghost icon component
 function GhostIcon({ state }: { state: TokenState }) {
   const stateClass = state.type === "authenticated" ? "authenticated" 
@@ -146,6 +162,7 @@ function App() {
     } catch (e) {
       setError(String(e));
     } finally {
+      await loadState();
       setIsSaving(false);
     }
   }
@@ -354,6 +371,24 @@ function App() {
         )}
 
         {/* Status display */}
+        {tokenState.type === "idle" && (
+          <div className="status-section">
+            <div className="status-row">
+              <span className="label">Status:</span>
+              <span className="value">Not configured</span>
+            </div>
+          </div>
+        )}
+
+        {tokenState.type === "authenticating" && (
+          <div className="status-section">
+            <div className="status-row">
+              <span className="label">Status:</span>
+              <span className="value warning">Connecting...</span>
+            </div>
+          </div>
+        )}
+
         {tokenState.type === "verifying" && (
           <div className="status-section">
             <div className="status-row">
@@ -384,7 +419,7 @@ function App() {
           <div className="status-section">
             <div className="status-row">
               <span className="label">Status:</span>
-              <span className="value error">Failed</span>
+              <span className="value error">{statusLabelFromError(tokenState.error)}</span>
             </div>
             <div className="status-row">
               <span className="value error">{tokenState.error}</span>

@@ -467,11 +467,8 @@ impl TokenService {
             let _ = fs::remove_file(path);
         }
 
-        // Delete auth.json for OpenCode
-        if let Some(data_dir) = dirs::data_local_dir() {
-            let auth_path = data_dir.join("opencode").join("auth.json");
-            let _ = fs::remove_file(auth_path);
-        }
+        // Remove only dymium credentials from OpenCode auth.json
+        OpenCodeService::clear_dymium_auth();
 
         // Reset state
         self.state = TokenState::Idle;
@@ -509,6 +506,8 @@ impl TokenService {
         self.config.static_api_key = None;
 
         self.config.save().map_err(|e| TokenError::ConfigError(e.to_string()))?;
+        self.state = TokenState::Idle;
+        self.last_refresh = None;
         log::info!("OAuth configuration saved");
         Ok(())
     }
@@ -532,6 +531,8 @@ impl TokenService {
         self.config.refresh_token = None;
 
         self.config.save().map_err(|e| TokenError::ConfigError(e.to_string()))?;
+        self.state = TokenState::Idle;
+        self.last_refresh = None;
         log::info!("Static API key configuration saved");
         Ok(())
     }

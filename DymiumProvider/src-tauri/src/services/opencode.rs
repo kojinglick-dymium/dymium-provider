@@ -15,6 +15,8 @@ pub enum OpenCodeError {
     IoError(#[from] std::io::Error),
     #[error("JSON error: {0}")]
     JsonError(#[from] serde_json::Error),
+    #[error("Config parse error: {0}")]
+    ParseError(String),
     #[error("Home directory not found")]
     NoHomeDir,
 }
@@ -41,18 +43,8 @@ impl OpenCodeService {
             .ok_or(OpenCodeError::NoHomeDir)
     }
 
-    /// Get the plugin directory path
-    fn plugin_dir() -> Result<PathBuf, OpenCodeError> {
-        dirs::home_dir()
-            .map(|p| p.join(".local/share/dymium-opencode-plugin"))
-            .ok_or(OpenCodeError::NoHomeDir)
-    }
-
     /// Ensure the dymium provider is configured in opencode.json
     pub fn ensure_dymium_provider(config: &AppConfig) -> Result<(), OpenCodeError> {
-        // First ensure the plugin exists
-        Self::ensure_plugin()?;
-
         let config_path = Self::config_path()?;
 
         // Ensure config directory exists
@@ -60,15 +52,22 @@ impl OpenCodeService {
             fs::create_dir_all(parent)?;
         }
 
-        // Read existing config or create new
+        // Read existing config (accept JSON with comments/trailing commas) or create new
         let mut opencode_config: Value = if config_path.exists() {
             let content = fs::read_to_string(&config_path)?;
-            serde_json::from_str(&content)?
+            Self::parse_json_like(&content)?
         } else {
             json!({
                 "$schema": "https://opencode.ai/config.json"
             })
         };
+
+        if !opencode_config.is_object() {
+            log::warn!("opencode.json root was not an object; recreating object root");
+            opencode_config = json!({
+                "$schema": "https://opencode.ai/config.json"
+            });
+        }
 
         let mut changed = false;
 
@@ -78,6 +77,11 @@ impl OpenCodeService {
             .unwrap()
             .entry("provider")
             .or_insert_with(|| json!({}));
+        if !providers.is_object() {
+            log::warn!("opencode.json 'provider' key was not an object; replacing with object");
+            *providers = json!({});
+            changed = true;
+        }
 
         // Resolve the API key to write into options.apiKey
         let api_key = Self::resolve_token(config).ok();
@@ -93,6 +97,11 @@ impl OpenCodeService {
         // Add or update dymium provider
         let providers_map = providers.as_object_mut().unwrap();
         if let Some(existing) = providers_map.get_mut("dymium") {
+            if !existing.is_object() {
+                log::warn!("opencode.json provider.dymium was not an object; replacing with object");
+                *existing = json!({});
+                changed = true;
+            }
             let obj = existing.as_object_mut().unwrap();
 
             // Always update `api` field to the effective URL
@@ -113,6 +122,11 @@ impl OpenCodeService {
 
             // Merge into existing options (preserve user-set headers, etc.)
             let options = obj.entry("options").or_insert_with(|| json!({}));
+            if !options.is_object() {
+                log::warn!("opencode.json provider.dymium.options was not an object; replacing with object");
+                *options = json!({});
+                changed = true;
+            }
             let opts = options.as_object_mut().unwrap();
 
             // Update baseURL if changed
@@ -195,13 +209,31 @@ impl OpenCodeService {
 
         // Ensure plugin is registered via npm
         let npm_plugin = "dymium-auth-plugin@latest";
-        let plugins = opencode_config
+        let plugins_value = opencode_config
             .as_object_mut()
             .unwrap()
             .entry("plugin")
             .or_insert_with(|| json!([]));
-
-        let plugins_array = plugins.as_array_mut().unwrap();
+        let plugins_array = match plugins_value {
+            Value::Array(arr) => arr,
+            Value::String(s) => {
+                let moved = s.clone();
+                *plugins_value = json!([moved]);
+                changed = true;
+                plugins_value.as_array_mut().unwrap()
+            }
+            Value::Null => {
+                *plugins_value = json!([]);
+                changed = true;
+                plugins_value.as_array_mut().unwrap()
+            }
+            _ => {
+                log::warn!("opencode.json 'plugin' key was not an array/string; replacing with array");
+                *plugins_value = json!([]);
+                changed = true;
+                plugins_value.as_array_mut().unwrap()
+            }
+        };
 
         // Remove any stale file:// plugin entries
         let old_len = plugins_array.len();
@@ -239,84 +271,19 @@ impl OpenCodeService {
         Ok(())
     }
 
-    /// Create or update the OpenCode plugin
-    fn ensure_plugin() -> Result<(), OpenCodeError> {
-        let plugin_dir = Self::plugin_dir()?;
-        fs::create_dir_all(&plugin_dir)?;
-
-        // Write package.json
-        let package_json = json!({
-            "name": "opencode-dymium-auth",
-            "version": "1.0.0",
-            "description": "OpenCode plugin for Dymium authentication with automatic token refresh on every request",
-            "main": "index.ts",
-            "type": "module",
-            "keywords": ["opencode", "plugin", "dymium", "auth"],
-            "author": "Dymium Provider App",
-            "license": "MIT"
-        });
-
-        fs::write(
-            plugin_dir.join("package.json"),
-            serde_json::to_string_pretty(&package_json)?,
-        )?;
-
-        // Write the plugin TypeScript code (embedded at compile time)
-        // This is a lightweight version — auth is handled via options.apiKey in opencode.json.
-        // The plugin provides event logging for debugging the GhostLLM integration.
-        const PLUGIN_SOURCE: &str = r#"import fs from "fs"
-import path from "path"
-import os from "os"
-
-const LOG_DIR = path.join(os.homedir(), ".local/share/dymium-opencode-plugin")
-const LOG_FILE = path.join(LOG_DIR, "debug.log")
-
-try { if (!fs.existsSync(LOG_DIR)) fs.mkdirSync(LOG_DIR, { recursive: true }) } catch {}
-
-function log(message: string) {
-  try { fs.appendFileSync(LOG_FILE, `${new Date().toISOString()} ${message}\n`) } catch {}
-}
-
-function formatDuration(ms: number): string {
-  if (ms < 1000) return `${ms}ms`
-  const s = Math.floor(ms / 1000)
-  if (s < 60) return `${s}s`
-  return `${Math.floor(s / 60)}m ${s % 60}s`
-}
-
-let startTime: number | null = null
-
-export default async function plugin({ client, project, directory }: any) {
-  log(`Plugin initialized for project: ${project?.name || directory}`)
-  return {
-    event: async ({ event }: { event: { type: string; properties?: Record<string, any> } }) => {
-      const { type, properties: props = {} } = event
-      switch (type) {
-        case "session.created":
-          startTime = Date.now()
-          log("Session created")
-          break
-        case "session.idle":
-          if (startTime) { log(`Session completed in ${formatDuration(Date.now() - startTime)}`); startTime = null }
-          break
-        case "session.error":
-          log(`Session error: ${JSON.stringify(props)}`)
-          if (startTime) { log(`Session failed after ${formatDuration(Date.now() - startTime)}`); startTime = null }
-          break
-        case "session.status":
-          log(`Session status: ${props.status || "unknown"}`)
-          break
-        default:
-          if (type.startsWith("session.") || type.startsWith("message.")) log(`Event: ${type}`)
-      }
-    },
-  }
-}
-"#;
-        fs::write(plugin_dir.join("index.ts"), PLUGIN_SOURCE)?;
-
-        log::info!("Dymium OpenCode plugin created at {}", plugin_dir.display());
-        Ok(())
+    fn parse_json_like(content: &str) -> Result<Value, OpenCodeError> {
+        match serde_json::from_str(content) {
+            Ok(v) => Ok(v),
+            Err(_) => {
+                let parsed: Value = json5::from_str(content).map_err(|e| {
+                    OpenCodeError::ParseError(format!(
+                        "failed to parse as JSON/JSONC/JSON5: {}",
+                        e
+                    ))
+                })?;
+                Ok(parsed)
+            }
+        }
     }
 
     /// Update the auth.json file with the current token
@@ -410,7 +377,7 @@ export default async function plugin({ client, project, directory }: any) {
         // Read existing auth or create new
         let mut auth: Value = if auth_path.exists() {
             let content = fs::read_to_string(&auth_path)?;
-            serde_json::from_str(&content).unwrap_or_else(|_| json!({}))
+            Self::parse_json_like(&content).unwrap_or_else(|_| json!({}))
         } else {
             json!({})
         };
@@ -469,7 +436,7 @@ export default async function plugin({ client, project, directory }: any) {
         }
 
         let content = fs::read_to_string(&auth_path)?;
-        let mut auth: Value = serde_json::from_str(&content).unwrap_or_else(|_| json!({}));
+        let mut auth: Value = Self::parse_json_like(&content).unwrap_or_else(|_| json!({}));
 
         // Remove the dymium entry
         if let Some(obj) = auth.as_object_mut() {
