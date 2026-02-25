@@ -98,7 +98,9 @@ impl OpenCodeService {
         let providers_map = providers.as_object_mut().unwrap();
         if let Some(existing) = providers_map.get_mut("dymium") {
             if !existing.is_object() {
-                log::warn!("opencode.json provider.dymium was not an object; replacing with object");
+                log::warn!(
+                    "opencode.json provider.dymium was not an object; replacing with object"
+                );
                 *existing = json!({});
                 changed = true;
             }
@@ -207,6 +209,14 @@ impl OpenCodeService {
             log::info!("Added dymium provider to opencode.json");
         }
 
+        // Ensure all configured Dymium models surface interleaved reasoning deltas.
+        if let Some(dymium_obj) = providers_map
+            .get_mut("dymium")
+            .and_then(|v| v.as_object_mut())
+        {
+            Self::ensure_model_interleaving(dymium_obj, &mut changed);
+        }
+
         // Ensure plugin is registered via npm
         let npm_plugin = "dymium-auth-plugin@latest";
         let plugins_value = opencode_config
@@ -228,7 +238,9 @@ impl OpenCodeService {
                 plugins_value.as_array_mut().unwrap()
             }
             _ => {
-                log::warn!("opencode.json 'plugin' key was not an array/string; replacing with array");
+                log::warn!(
+                    "opencode.json 'plugin' key was not an array/string; replacing with array"
+                );
                 *plugins_value = json!([]);
                 changed = true;
                 plugins_value.as_array_mut().unwrap()
@@ -271,15 +283,47 @@ impl OpenCodeService {
         Ok(())
     }
 
+    fn ensure_model_interleaving(
+        dymium_obj: &mut serde_json::Map<String, Value>,
+        changed: &mut bool,
+    ) {
+        let Some(models_obj) = dymium_obj.get_mut("models").and_then(|v| v.as_object_mut()) else {
+            return;
+        };
+
+        for (model_id, model_cfg) in models_obj.iter_mut() {
+            let Some(cfg_obj) = model_cfg.as_object_mut() else {
+                continue;
+            };
+
+            let needs_update = !cfg_obj
+                .get("interleaved")
+                .and_then(|v| v.as_object())
+                .and_then(|m| m.get("field"))
+                .and_then(|v| v.as_str())
+                .map(|s| s == "reasoning_content")
+                .unwrap_or(false);
+
+            if needs_update {
+                cfg_obj.insert(
+                    "interleaved".to_string(),
+                    json!({ "field": "reasoning_content" }),
+                );
+                *changed = true;
+                log::info!(
+                    "Enabled interleaved reasoning_content for dymium model {} in opencode.json",
+                    model_id
+                );
+            }
+        }
+    }
+
     fn parse_json_like(content: &str) -> Result<Value, OpenCodeError> {
         match serde_json::from_str(content) {
             Ok(v) => Ok(v),
             Err(_) => {
                 let parsed: Value = json5::from_str(content).map_err(|e| {
-                    OpenCodeError::ParseError(format!(
-                        "failed to parse as JSON/JSONC/JSON5: {}",
-                        e
-                    ))
+                    OpenCodeError::ParseError(format!("failed to parse as JSON/JSONC/JSON5: {}", e))
                 })?;
                 Ok(parsed)
             }

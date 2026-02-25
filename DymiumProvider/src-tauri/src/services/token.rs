@@ -117,8 +117,9 @@ impl TokenService {
         log::info!("Static API key written to token file");
 
         // Ensure OpenCode config and update auth.json
-        OpenCodeService::ensure_dymium_provider(&self.config)
-            .map_err(|e| TokenError::ConfigError(format!("Failed to update OpenCode config: {}", e)))?;
+        OpenCodeService::ensure_dymium_provider(&self.config).map_err(|e| {
+            TokenError::ConfigError(format!("Failed to update OpenCode config: {}", e))
+        })?;
 
         log::info!("Updated opencode.json with static API key");
 
@@ -145,7 +146,10 @@ impl TokenService {
         // Try refresh token first if we have one
         if let Some(refresh_token) = &self.config.refresh_token {
             log::info!("Attempting refresh token grant...");
-            match self.perform_refresh_token_grant(refresh_token.clone()).await {
+            match self
+                .perform_refresh_token_grant(refresh_token.clone())
+                .await
+            {
                 Ok(response) => {
                     log::info!(
                         "Refresh token grant succeeded, token expires in {}s",
@@ -175,7 +179,10 @@ impl TokenService {
     }
 
     /// Handle successful authentication response
-    async fn handle_successful_auth(&mut self, response: KeycloakTokenResponse) -> Result<(), TokenError> {
+    async fn handle_successful_auth(
+        &mut self,
+        response: KeycloakTokenResponse,
+    ) -> Result<(), TokenError> {
         let expires_at = Utc::now() + Duration::seconds(response.expires_in);
 
         // Store refresh token if we got one
@@ -194,10 +201,14 @@ impl TokenService {
         log::info!("Access token written to token file");
 
         // Ensure OpenCode config and update auth.json
-        OpenCodeService::ensure_dymium_provider(&self.config)
-            .map_err(|e| TokenError::ConfigError(format!("Failed to update OpenCode config: {}", e)))?;
+        OpenCodeService::ensure_dymium_provider(&self.config).map_err(|e| {
+            TokenError::ConfigError(format!("Failed to update OpenCode config: {}", e))
+        })?;
 
-        log::info!("Updated opencode.json with OAuth token, expires at {}", expires_at);
+        log::info!(
+            "Updated opencode.json with OAuth token, expires at {}",
+            expires_at
+        );
 
         // Verify the endpoint actually works
         self.state = TokenState::Verifying;
@@ -295,7 +306,10 @@ impl TokenService {
 
         let status = response.status();
         if !status.is_success() {
-            let body = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            let body = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
             return Err(TokenError::AuthFailed {
                 status: status.as_u16(),
                 body,
@@ -331,7 +345,10 @@ impl TokenService {
 
         let status = response.status();
         if !status.is_success() {
-            let body = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            let body = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
             log::warn!(
                 "Refresh token grant failed with status {}: {}",
                 status.as_u16(),
@@ -357,8 +374,7 @@ impl TokenService {
 
     /// Write token to disk
     fn write_token(&self, token: &str) -> Result<(), TokenError> {
-        let path = AppConfig::token_path()
-            .map_err(|e| TokenError::ConfigError(e.to_string()))?;
+        let path = AppConfig::token_path().map_err(|e| TokenError::ConfigError(e.to_string()))?;
 
         // Ensure directory exists
         if let Some(parent) = path.parent() {
@@ -395,10 +411,16 @@ impl TokenService {
 
         // Try refresh token first, fall back to password grant
         let response = if let Some(refresh_token) = &self.config.refresh_token.clone() {
-            match self.perform_refresh_token_grant(refresh_token.clone()).await {
+            match self
+                .perform_refresh_token_grant(refresh_token.clone())
+                .await
+            {
                 Ok(resp) => resp,
                 Err(e) => {
-                    log::warn!("Refresh token grant failed in tick: {}, trying password grant", e);
+                    log::warn!(
+                        "Refresh token grant failed in tick: {}, trying password grant",
+                        e
+                    );
                     self.perform_password_grant().await?
                 }
             }
@@ -418,8 +440,9 @@ impl TokenService {
 
         // Write new access token to disk files
         self.write_token(&response.access_token)?;
-        OpenCodeService::ensure_dymium_provider(&self.config)
-            .map_err(|e| TokenError::ConfigError(format!("Failed to update OpenCode config: {}", e)))?;
+        OpenCodeService::ensure_dymium_provider(&self.config).map_err(|e| {
+            TokenError::ConfigError(format!("Failed to update OpenCode config: {}", e))
+        })?;
 
         self.state = TokenState::Authenticated {
             token: response.access_token,
@@ -455,7 +478,9 @@ impl TokenService {
         self.config.password = None;
         self.config.refresh_token = None;
         self.config.static_api_key = None;
-        self.config.save().map_err(|e| TokenError::ConfigError(e.to_string()))?;
+        self.config
+            .save()
+            .map_err(|e| TokenError::ConfigError(e.to_string()))?;
 
         // Delete keystore entries
         let _ = KeystoreService::delete(CredentialKey::ClientSecret);
@@ -492,7 +517,7 @@ impl TokenService {
     ) -> Result<(), TokenError> {
         // Clear old credentials immediately when switching modes
         self.clear_cached_credentials();
-        
+
         self.config.auth_mode = AuthMode::OAuth;
         self.config.keycloak_url = keycloak_url;
         self.config.realm = realm;
@@ -505,7 +530,9 @@ impl TokenService {
         self.config.refresh_token = None; // Clear old refresh token
         self.config.static_api_key = None;
 
-        self.config.save().map_err(|e| TokenError::ConfigError(e.to_string()))?;
+        self.config
+            .save()
+            .map_err(|e| TokenError::ConfigError(e.to_string()))?;
         self.state = TokenState::Idle;
         self.last_refresh = None;
         log::info!("OAuth configuration saved");
@@ -521,7 +548,7 @@ impl TokenService {
     ) -> Result<(), TokenError> {
         // Clear old credentials immediately when switching modes
         self.clear_cached_credentials();
-        
+
         self.config.auth_mode = AuthMode::StaticKey;
         self.config.llm_endpoint = llm_endpoint;
         self.config.static_api_key = Some(static_api_key);
@@ -530,7 +557,9 @@ impl TokenService {
         self.config.password = None;
         self.config.refresh_token = None;
 
-        self.config.save().map_err(|e| TokenError::ConfigError(e.to_string()))?;
+        self.config
+            .save()
+            .map_err(|e| TokenError::ConfigError(e.to_string()))?;
         self.state = TokenState::Idle;
         self.last_refresh = None;
         log::info!("Static API key configuration saved");
@@ -593,10 +622,7 @@ impl TokenService {
 /// Returns just the hostname without port (for Istio VirtualService matching).
 fn extract_hostname(url: &str) -> String {
     // Strip scheme
-    let after_scheme = url
-        .find("://")
-        .map(|i| &url[i + 3..])
-        .unwrap_or(url);
+    let after_scheme = url.find("://").map(|i| &url[i + 3..]).unwrap_or(url);
     // Take up to first / or :
     let host = after_scheme
         .split(&['/', ':'][..])

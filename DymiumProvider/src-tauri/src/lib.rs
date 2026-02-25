@@ -50,17 +50,16 @@ async fn save_oauth_config(
     password: String,
 ) -> Result<(), String> {
     let mut service = state.token_service.lock().await;
-    let result = service
-        .save_oauth_setup(
-            keycloak_url,
-            realm,
-            client_id,
-            username,
-            llm_endpoint,
-            ghostllm_app,
-            client_secret,
-            password,
-        );
+    let result = service.save_oauth_setup(
+        keycloak_url,
+        realm,
+        client_id,
+        username,
+        llm_endpoint,
+        ghostllm_app,
+        client_secret,
+        password,
+    );
     update_tray_status(&app, service.state());
     let _ = app.emit("token-state-changed", service.state());
     result.map_err(|e| e.to_string())
@@ -121,14 +120,23 @@ async fn start_refresh_loop(app: AppHandle, state: State<'_, AppState>) -> Resul
 
 /// Build the tray menu
 fn build_tray_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
-    let status = MenuItem::with_id(app, "status", "Status: Initializing...", false, None::<&str>)?;
+    let status = MenuItem::with_id(
+        app,
+        "status",
+        "Status: Initializing...",
+        false,
+        None::<&str>,
+    )?;
     let refresh = MenuItem::with_id(app, "refresh", "Refresh Now", true, None::<&str>)?;
     let separator1 = PredefinedMenuItem::separator(app)?;
     let setup = MenuItem::with_id(app, "setup", "Setup...", true, None::<&str>)?;
     let separator2 = PredefinedMenuItem::separator(app)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
 
-    Menu::with_items(app, &[&status, &refresh, &separator1, &setup, &separator2, &quit])
+    Menu::with_items(
+        app,
+        &[&status, &refresh, &separator1, &setup, &separator2, &quit],
+    )
 }
 
 /// Update tray menu status text
@@ -194,8 +202,8 @@ pub fn run() {
 
             // Load tray icon from embedded PNG bytes (44x44 for retina displays)
             let icon_bytes = include_bytes!("../icons/tray-icon.png");
-            let icon = tauri::image::Image::from_bytes(icon_bytes)
-                .expect("Failed to load tray icon");
+            let icon =
+                tauri::image::Image::from_bytes(icon_bytes).expect("Failed to load tray icon");
 
             // Create the tray icon
             let _tray = TrayIconBuilder::with_id("main")
